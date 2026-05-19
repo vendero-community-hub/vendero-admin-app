@@ -1,6 +1,4 @@
-import type { NextConfig } from 'next'
-
-function normalizeAppEnvironment(value?: string) {
+function normalizeAppEnvironment(value) {
   const normalized = String(value ?? '').trim().toLowerCase()
   if (['prod', 'pro', 'production'].includes(normalized)) return 'prod'
   if (['test', 'testing', 'stage', 'staging', 'stahing'].includes(normalized)) return 'test'
@@ -17,7 +15,8 @@ const apiDefaults = {
   prod: 'https://api.vendero.in',
 }
 
-const nextConfig: NextConfig = {
+/** @type {import('next').NextConfig} */
+const nextConfig = {
   reactStrictMode: true,
   async rewrites() {
     const apiBaseUrl = process.env.API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? apiDefaults[appEnv]

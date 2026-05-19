@@ -7,12 +7,13 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { ENV_HEADERS } from '@/lib/environment'
+import { APP_ENV, ENV_HEADERS } from '@/lib/environment'
 
 type Stage = 'request' | 'verify'
 
 const VENDERO_LOGO_URL =
   'https://pub-62b8d9a00e0749d5a58a987a7c20cebc.r2.dev/app/assets/logo-white.svg'
+const SHOW_DEV_OTP = APP_ENV === 'dev'
 
 function formatCooldown(seconds: number) {
   const minutes = Math.floor(seconds / 60)
@@ -82,7 +83,7 @@ export function AdminAuthPanel() {
       setRetryAfterSeconds(0)
       setStage('verify')
       setMessage(
-        data.devOtpCode
+        SHOW_DEV_OTP && data.devOtpCode
           ? `OTP sent. Dev code: ${data.devOtpCode}`
           : 'OTP sent to the registered staff number.'
       )

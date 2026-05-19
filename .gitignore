@@ -10,6 +10,7 @@ tmp/*
 .env
 .env.*
 !.env.example
+!.env.test.example
 .env.local
 .env.production.local
 .env.development.local

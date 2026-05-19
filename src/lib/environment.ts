@@ -34,6 +34,7 @@ export const API_URL =
   process.env.NEXT_PUBLIC_API_URL ??
   apiDefaults[APP_ENV];
 export const REALTIME_URL =
+  process.env.NEXT_PUBLIC_SOCKET_URL ??
   process.env.NEXT_PUBLIC_REALTIME_URL ??
   process.env.REALTIME_URL ??
   realtimeDefaults[APP_ENV];
@@ -41,3 +42,37 @@ export const REALTIME_URL =
 export const ENV_HEADERS = {
   "x-vendero-env": APP_ENV,
 };
+
+function socketPathFrom(pathname: string) {
+  const normalized = pathname.trim().replace(/\/+$/, "");
+  if (!normalized) return "";
+  return normalized.endsWith("/socket.io")
+    ? normalized
+    : `${normalized}/socket.io`;
+}
+
+export function socketIoEndpoint(rawUrl = REALTIME_URL) {
+  try {
+    const parsed = new URL(rawUrl);
+    const configuredPath = process.env.NEXT_PUBLIC_SOCKET_IO_PATH;
+    const socketPath =
+      socketPathFrom(configuredPath ?? "") ||
+      socketPathFrom(parsed.pathname) ||
+      (parsed.hostname === "test-api.vendero.in"
+        ? "/realtime/socket.io"
+        : "");
+    const url = `${parsed.protocol}//${parsed.host}`;
+
+    return {
+      url,
+      path: socketPath || "/socket.io",
+    };
+  } catch {
+    return {
+      url: rawUrl,
+      path:
+        socketPathFrom(process.env.NEXT_PUBLIC_SOCKET_IO_PATH ?? "") ||
+        "/socket.io",
+    };
+  }
+}

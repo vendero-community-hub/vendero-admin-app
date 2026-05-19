@@ -32,7 +32,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { APP_ENV, REALTIME_URL } from "@/lib/environment";
+import { APP_ENV, socketIoEndpoint } from "@/lib/environment";
 
 type BadgeTone =
   | "default"
@@ -447,12 +447,18 @@ export function WhatsappAdminPanel({
 
     void import("socket.io-client").then(({ io }) => {
       if (closed) return;
-      socket = io(REALTIME_URL, {
-        transports: ["websocket"],
+      const endpoint = socketIoEndpoint();
+      socket = io(endpoint.url, {
+        path: endpoint.path,
+        transports: ["websocket", "polling"],
         auth: { token, appEnv: APP_ENV },
       });
       socket.on("connect", () => setSocketState("connected"));
       socket.on("disconnect", () => setSocketState("idle"));
+      socket.on("connect_error", (socketError: Error) => {
+        setSocketState("idle");
+        setLiveNotice(`Live inbox connection failed: ${socketError.message}`);
+      });
       socket.on(
         "whatsapp:message:new",
         (payload: {
