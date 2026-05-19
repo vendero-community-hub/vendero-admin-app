@@ -1,0 +1,62 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+}
+
+:root {
+  --background: oklch(0.16 0.02 258);
+  --foreground: oklch(0.97 0.01 252);
+  --card: oklch(0.2 0.025 257);
+  --card-foreground: oklch(0.96 0.01 252);
+  --popover: oklch(0.21 0.02 257);
+  --popover-foreground: oklch(0.96 0.01 252);
+  --primary: oklch(0.72 0.16 166);
+  --primary-foreground: oklch(0.14 0.02 258);
+  --secondary: oklch(0.27 0.024 257);
+  --secondary-foreground: oklch(0.95 0.01 252);
+  --muted: oklch(0.26 0.02 257);
+  --muted-foreground: oklch(0.72 0.03 253);
+  --accent: oklch(0.25 0.035 230);
+  --accent-foreground: oklch(0.96 0.01 252);
+  --destructive: oklch(0.63 0.22 24);
+  --border: oklch(0.3 0.02 256 / 0.9);
+  --input: oklch(0.28 0.02 256);
+  --ring: oklch(0.72 0.16 166 / 0.45);
+  --sidebar: oklch(0.14 0.018 258);
+}
+
+* {
+  @apply border-border;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  @apply bg-background text-foreground antialiased;
+  background-image:
+    radial-gradient(circle at top left, rgba(120, 183, 255, 0.1), transparent 18%),
+    radial-gradient(circle at bottom right, rgba(31, 157, 122, 0.1), transparent 22%),
+    linear-gradient(180deg, rgba(8, 12, 20, 1) 0%, rgba(12, 17, 25, 1) 100%);
+}
