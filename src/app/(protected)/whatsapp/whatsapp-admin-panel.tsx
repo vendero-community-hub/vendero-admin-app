@@ -450,7 +450,7 @@ export function WhatsappAdminPanel({
       const endpoint = socketIoEndpoint();
       socket = io(endpoint.url, {
         path: endpoint.path,
-        transports: ["websocket", "polling"],
+        transports: ["polling", "websocket"],
         auth: { token, appEnv: APP_ENV },
       });
       socket.on("connect", () => setSocketState("connected"));

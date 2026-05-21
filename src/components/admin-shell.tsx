@@ -4,6 +4,7 @@ import { cookies } from 'next/headers'
 import { Activity, BellRing, Building2, CreditCard, LayoutDashboard, Link2, MessageSquareWarning, MessagesSquare, ShieldCheck, ShoppingBag, SquareTerminal, Users, Waypoints } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
+import { AdminLogoutButton } from '@/components/admin-session-actions'
 
 const VENDERO_LOGO_URL =
   'https://pub-62b8d9a00e0749d5a58a987a7c20cebc.r2.dev/app/assets/logo-white.svg'
@@ -163,6 +164,7 @@ export async function AdminShell({ children }: { children: React.ReactNode }) {
                   {hasAdminToken ? 'Manage session' : 'Open login'}
                 </Badge>
               </Link>
+              {hasAdminToken ? <AdminLogoutButton /> : null}
             </div>
           </header>
 

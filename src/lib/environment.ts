@@ -10,12 +10,41 @@ export function normalizeAppEnvironment(value?: string | null): AppEnvironment {
   return "dev";
 }
 
-export const APP_ENV = normalizeAppEnvironment(
-  process.env.NEXT_PUBLIC_APP_ENV ??
-    process.env.APP_ENV ??
-    process.env.VENDERO_ENV ??
-    process.env.NODE_ENV
+function firstConfiguredValue(...values: Array<string | undefined>) {
+  return values.find((value) => typeof value === "string" && value.trim());
+}
+
+function appEnvironmentFromUrl(value?: string | null): AppEnvironment | null {
+  if (!value) return null;
+
+  try {
+    const hostname = new URL(value).hostname.toLowerCase();
+    if (["localhost", "127.0.0.1", "0.0.0.0"].includes(hostname)) return "dev";
+    if (hostname === "test-api.vendero.in" || hostname.startsWith("test-")) {
+      return "test";
+    }
+    if (hostname.endsWith(".vendero.in")) return "prod";
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+const configuredAppEnvironment = firstConfiguredValue(
+  process.env.NEXT_PUBLIC_APP_ENV,
+  process.env.APP_ENV,
+  process.env.VENDERO_ENV
 );
+
+export const APP_ENV = configuredAppEnvironment
+  ? normalizeAppEnvironment(configuredAppEnvironment)
+  : appEnvironmentFromUrl(process.env.NEXT_PUBLIC_API_URL) ??
+    appEnvironmentFromUrl(process.env.API_URL) ??
+    appEnvironmentFromUrl(process.env.NEXT_PUBLIC_SOCKET_URL) ??
+    appEnvironmentFromUrl(process.env.NEXT_PUBLIC_REALTIME_URL) ??
+    appEnvironmentFromUrl(process.env.REALTIME_URL) ??
+    normalizeAppEnvironment(process.env.NODE_ENV);
 
 const apiDefaults: Record<AppEnvironment, string> = {
   dev: "http://localhost:3333",

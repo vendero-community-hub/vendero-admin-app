@@ -108,7 +108,7 @@ async function getOverview() {
 
   if (!response.ok) return null
   const payload = await response.json()
-  return payload.data as Overview
+  return (payload.data?.data ?? payload.data) as Overview
 }
 
 function variantForStatus(status: string): 'success' | 'warning' | 'danger' | 'secondary' {
@@ -120,6 +120,19 @@ function variantForStatus(status: string): 'success' | 'warning' | 'danger' | 's
 
 export default async function SubscriptionsPage() {
   const overview = await getOverview()
+  const analytics = overview?.analytics ?? {
+    totalPlans: 0,
+    activePlans: 0,
+    activeSubscribers: 0,
+    expiredSubscribers: 0,
+    paymentPendingVerification: 0,
+    verifiedPayments: 0,
+    monthlyRevenueBooked: 0,
+  }
+  const plans = overview?.plans ?? []
+  const memberships = overview?.memberships ?? []
+  const payments = overview?.payments ?? []
+  const histories = overview?.histories ?? []
 
   return (
     <main className="space-y-6">
@@ -137,7 +150,7 @@ export default async function SubscriptionsPage() {
           </CardHeader>
           <CardContent className="flex flex-wrap gap-3">
             <CreatePlanButton />
-            <SubscriptionQuickActions plans={overview?.plans ?? []} />
+            <SubscriptionQuickActions plans={plans} />
           </CardContent>
         </Card>
 
@@ -149,19 +162,19 @@ export default async function SubscriptionsPage() {
           <CardContent className="grid grid-cols-2 gap-3 text-sm">
             <div className="rounded-xl border border-border/70 bg-background/30 p-3">
               <p className="text-muted-foreground">Active subs</p>
-              <p className="mt-1 text-2xl font-semibold">{overview?.analytics.activeSubscribers ?? 0}</p>
+              <p className="mt-1 text-2xl font-semibold">{analytics.activeSubscribers}</p>
             </div>
             <div className="rounded-xl border border-border/70 bg-background/30 p-3">
               <p className="text-muted-foreground">Pending payments</p>
-              <p className="mt-1 text-2xl font-semibold">{overview?.analytics.paymentPendingVerification ?? 0}</p>
+              <p className="mt-1 text-2xl font-semibold">{analytics.paymentPendingVerification}</p>
             </div>
             <div className="rounded-xl border border-border/70 bg-background/30 p-3">
               <p className="text-muted-foreground">Expired subs</p>
-              <p className="mt-1 text-2xl font-semibold">{overview?.analytics.expiredSubscribers ?? 0}</p>
+              <p className="mt-1 text-2xl font-semibold">{analytics.expiredSubscribers}</p>
             </div>
             <div className="rounded-xl border border-border/70 bg-background/30 p-3">
               <p className="text-muted-foreground">Verified revenue</p>
-              <p className="mt-1 text-2xl font-semibold">₹{overview?.analytics.monthlyRevenueBooked ?? 0}</p>
+              <p className="mt-1 text-2xl font-semibold">₹{analytics.monthlyRevenueBooked}</p>
             </div>
           </CardContent>
         </Card>
@@ -174,7 +187,7 @@ export default async function SubscriptionsPage() {
             <CardDescription>Fully customizable plan catalog shown as subscription cards.</CardDescription>
           </CardHeader>
           <CardContent className="grid gap-4 lg:grid-cols-2">
-            {overview?.plans.map((plan) => (
+            {plans.map((plan) => (
               <div key={plan.id} className="rounded-2xl border border-border/70 bg-background/30 p-5">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
@@ -218,7 +231,7 @@ export default async function SubscriptionsPage() {
             <CardDescription>Current vendor access state and expiry blockers.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            {overview?.memberships.map((membership) => (
+            {memberships.map((membership) => (
               <div key={membership.id} className="rounded-xl border border-border/70 bg-background/30 p-4">
                 <div className="flex flex-wrap items-center gap-2">
                   <p className="font-medium">{membership.vendorProfile.businessName}</p>
@@ -242,7 +255,7 @@ export default async function SubscriptionsPage() {
             <CardDescription>Manual or assisted payment approval workflow.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            {overview?.payments.map((payment) => (
+            {payments.map((payment) => (
               <div key={payment.id} className="rounded-xl border border-border/70 bg-background/30 p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
@@ -273,7 +286,7 @@ export default async function SubscriptionsPage() {
             <CardDescription>Immutable subscription operations timeline.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            {overview?.histories.map((history) => (
+            {histories.map((history) => (
               <div key={history.id} className="rounded-xl border border-border/70 bg-background/30 p-4">
                 <div className="flex flex-wrap items-center gap-2">
                   <p className="font-medium">{history.action}</p>

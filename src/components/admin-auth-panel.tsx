@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { APP_ENV, ENV_HEADERS } from '@/lib/environment'
+import { AdminLogoutButton } from '@/components/admin-session-actions'
 
 type Stage = 'request' | 'verify'
 
@@ -35,8 +36,17 @@ export function AdminAuthPanel() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [retryAfterSeconds, setRetryAfterSeconds] = useState(0)
+  const [hasActiveSession, setHasActiveSession] = useState(false)
   const trimmedPhone = useMemo(() => phone.trim(), [phone])
   const isCooldownActive = retryAfterSeconds > 0
+
+  useEffect(() => {
+    setHasActiveSession(
+      document.cookie
+        .split('; ')
+        .some((part) => part.startsWith('vendero_admin_access_token='))
+    )
+  }, [])
 
   useEffect(() => {
     if (!retryAfterSeconds) {
@@ -161,6 +171,15 @@ export function AdminAuthPanel() {
           Vendero staff uses single-device OTP authentication. Sign in here to unlock server
           telemetry, vendor approvals, and operations screens.
         </CardDescription>
+        {hasActiveSession ? (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border/70 bg-background/35 px-4 py-3">
+            <div>
+              <p className="text-sm font-medium text-foreground">Active admin session</p>
+              <p className="text-xs text-muted-foreground">Logout before signing in with another staff account.</p>
+            </div>
+            <AdminLogoutButton />
+          </div>
+        ) : null}
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="space-y-4 rounded-2xl border border-border/70 bg-background/30 p-4">
