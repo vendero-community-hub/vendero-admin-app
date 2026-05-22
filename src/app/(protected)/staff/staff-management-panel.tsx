@@ -37,6 +37,7 @@ const DEFAULT_PERMISSION_OPTIONS: PermissionDefinition[] = [
   { key: 'verifications', label: 'Verifications', description: 'Review KYC queues.' },
   { key: 'subscriptions', label: 'Subscriptions', description: 'Manage plans and payments.' },
   { key: 'trips', label: 'Trips', description: 'Search trips and audit sharing conflicts.' },
+  { key: 'fleet', label: 'Cabs & Fare', description: 'Manage cab categories, cab models, and fare rates.' },
   { key: 'chat_moderation', label: 'Chat Moderation', description: 'Review reports and moderate chat abuse.' },
   { key: 'marketplace_moderation', label: 'Marketplace Moderation', description: 'Approve listings, moderate reviews, and review lead abuse.' },
   { key: 'whatsapp_admin', label: 'WhatsApp Business', description: 'Manage templates, opt-ins, message logs, and usage.' },

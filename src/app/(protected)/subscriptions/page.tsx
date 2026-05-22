@@ -4,11 +4,12 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   CreatePlanButton,
+  PaymentGatewaySettingsButton,
   SubscriptionQuickActions,
   UpdatePlanButton,
   VerifyPaymentButton,
 } from './subscription-actions'
-
+import type { PaymentGatewaySummary } from './subscription-actions'
 
 type Overview = {
   analytics: {
@@ -91,6 +92,7 @@ type Overview = {
       name: string
     } | null
   }>
+  paymentGateway: PaymentGatewaySummary
 }
 
 async function getOverview() {
@@ -133,6 +135,7 @@ export default async function SubscriptionsPage() {
   const memberships = overview?.memberships ?? []
   const payments = overview?.payments ?? []
   const histories = overview?.histories ?? []
+  const paymentGateway = overview?.paymentGateway ?? null
 
   return (
     <main className="space-y-6">
@@ -150,6 +153,7 @@ export default async function SubscriptionsPage() {
           </CardHeader>
           <CardContent className="flex flex-wrap gap-3">
             <CreatePlanButton />
+            <PaymentGatewaySettingsButton summary={paymentGateway} />
             <SubscriptionQuickActions plans={plans} />
           </CardContent>
         </Card>

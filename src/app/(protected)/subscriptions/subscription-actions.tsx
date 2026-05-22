@@ -1,19 +1,18 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
 const FEATURE_OPTIONS = [
-  { key: 'trip_access', label: 'Trip access' },
-  { key: 'premium_trip_access', label: 'Premium Trip Access' },
-  { key: 'availability_access', label: 'Availability access' },
-  { key: 'chats_access', label: 'Chats Access' },
-  { key: 'crm_access', label: 'CRM' },
-  { key: 'marketplace_access', label: 'Marketplace' },
-  { key: 'website_access', label: 'Website' },
-  { key: 'leads_access', label: 'Leads' },
-  { key: 'white_label_access', label: 'White Label' },
+  { key: 'trip_sharing', label: 'Trip sharing', aliases: ['trip_access', 'premium_trip_access', 'trip_share_basic'] },
+  { key: 'availability_posting', label: 'Availability posting', aliases: ['availability_access'] },
+  { key: 'chat_messaging', label: 'Chats', aliases: ['chats_access'] },
+  { key: 'broadcast_messaging', label: 'Broadcast messaging', aliases: ['broadcast_unlimited'] },
+  { key: 'crm_invoices', label: 'CRM invoices', aliases: ['crm_access'] },
+  { key: 'marketplace_listings', label: 'Marketplace listings', aliases: ['marketplace_access', 'leads_access', 'marketplace_profile'] },
+  { key: 'white_label_links', label: 'White Label links', aliases: ['white_label_access', 'website_access'] },
+  { key: 'whatsapp_business_messaging', label: 'WhatsApp business messaging', aliases: ['wpilot_early_access'] },
   { key: 'wpilot_early_access', label: 'Vendero WPilot Early Access', comingSoon: true },
   { key: 'adspilot_early_access', label: 'Vendero AdsPilot Early Access', comingSoon: true },
 ]
@@ -73,6 +72,34 @@ type Plan = {
   }>
 }
 
+export type PaymentGatewaySummary = {
+  provider: string
+  selectedMode: 'test' | 'live'
+  mode: 'test' | 'live'
+  modeLabel: string
+  checkout: {
+    provider: string
+    mode: 'test' | 'live'
+    modeLabel: string
+    keyId: string | null
+    configured: boolean
+    source: string | null
+  }
+  configs: Array<{
+    provider: string
+    mode: 'test' | 'live'
+    modeLabel: string
+    keyId: string | null
+    configured: boolean
+    keySecretConfigured: boolean
+    webhookSecretConfigured: boolean
+    isActive: boolean
+    isDefault: boolean
+    source: string | null
+    updatedAt: string | null
+  }>
+}
+
 function ModalShell({
   title,
   description,
@@ -110,9 +137,13 @@ function buildFeatureState(plan?: Plan | null) {
   const enabledKeys = new Set(
     (plan?.features ?? []).filter((item) => item.isEnabled).map((item) => item.featureKey)
   )
+  const hasAllAccess = plan?.featureConfig?.allAccess === true || plan?.featureConfig?.all_access === true
 
   return FEATURE_OPTIONS.reduce<Record<string, boolean>>((acc, feature) => {
-    acc[feature.key] = enabledKeys.has(feature.key)
+    acc[feature.key] =
+      hasAllAccess ||
+      enabledKeys.has(feature.key) ||
+      Boolean(feature.aliases?.some((alias) => enabledKeys.has(alias)))
     return acc
   }, {})
 }
@@ -572,6 +603,180 @@ export function RunMaintenanceButton() {
     <Button onClick={run} variant="outline" disabled={working}>
       {working ? 'Running...' : 'Run maintenance'}
     </Button>
+  )
+}
+
+export function PaymentGatewaySettingsButton({
+  summary,
+}: {
+  summary: PaymentGatewaySummary | null
+}) {
+  const initialMode = summary?.selectedMode ?? 'test'
+  const [open, setOpen] = useState(false)
+  const [working, setWorking] = useState(false)
+  const [mode, setMode] = useState<'test' | 'live'>(initialMode)
+  const [keyId, setKeyId] = useState('')
+  const [keySecret, setKeySecret] = useState('')
+  const [webhookSecret, setWebhookSecret] = useState('')
+  const [isActive, setIsActive] = useState(true)
+  const [makeDefault, setMakeDefault] = useState(true)
+  const [message, setMessage] = useState<string | null>(null)
+
+  const activeConfig = summary?.configs?.find((config) => config.mode === summary.selectedMode) ?? null
+  const selectedConfig = summary?.configs?.find((config) => config.mode === mode) ?? null
+
+  useEffect(() => {
+    setMode(initialMode)
+  }, [initialMode])
+
+  useEffect(() => {
+    const config = summary?.configs?.find((item) => item.mode === mode)
+    setKeyId(config?.keyId ?? '')
+    setKeySecret('')
+    setWebhookSecret('')
+    setIsActive(config?.isActive ?? true)
+    setMakeDefault(config?.isDefault ?? mode === summary?.selectedMode)
+    setMessage(null)
+  }, [mode, summary])
+
+  async function saveConfig() {
+    setWorking(true)
+    setMessage(null)
+    try {
+      await requestJson(
+        '/api/v1/admin/subscriptions/payment-gateway',
+        {
+          mode,
+          keyId,
+          keySecret: keySecret || null,
+          webhookSecret: webhookSecret || null,
+          isActive,
+          makeDefault,
+        },
+        'PUT'
+      )
+      window.location.reload()
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Unable to save gateway settings')
+    } finally {
+      setWorking(false)
+    }
+  }
+
+  async function activateMode() {
+    setWorking(true)
+    setMessage(null)
+    try {
+      await requestJson('/api/v1/admin/subscriptions/payment-gateway/mode', { mode })
+      window.location.reload()
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Unable to activate gateway mode')
+    } finally {
+      setWorking(false)
+    }
+  }
+
+  return (
+    <>
+      <Button onClick={() => setOpen(true)} variant="outline">
+        Payment gateway
+      </Button>
+      <ModalShell
+        title="Payment gateway"
+        description={`${summary?.modeLabel ?? 'Test'} mode is selected for Razorpay checkout.`}
+        open={open}
+        onClose={() => setOpen(false)}
+      >
+        <div className="space-y-5">
+          <div className="grid gap-3 md:grid-cols-3">
+            <div className="rounded-xl border border-border/70 bg-background/40 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Active mode</p>
+              <p className="mt-2 text-lg font-semibold">{summary?.modeLabel ?? 'Test'}</p>
+            </div>
+            <div className="rounded-xl border border-border/70 bg-background/40 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Key id</p>
+              <p className="mt-2 truncate text-sm font-medium">{activeConfig?.keyId ?? 'Not configured'}</p>
+            </div>
+            <div className="rounded-xl border border-border/70 bg-background/40 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Source</p>
+              <p className="mt-2 text-sm font-medium">{activeConfig?.source ?? 'empty'}</p>
+            </div>
+          </div>
+
+          <div className="inline-flex rounded-lg border border-border bg-background p-1">
+            {(['test', 'live'] as const).map((item) => (
+              <button
+                key={item}
+                type="button"
+                onClick={() => setMode(item)}
+                className={`rounded-md px-4 py-2 text-sm font-semibold transition ${
+                  mode === item ? 'bg-foreground text-background' : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {item === 'live' ? 'Production' : 'Test'}
+              </button>
+            ))}
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-2">
+            <Input
+              value={keyId}
+              onChange={(event) => setKeyId(event.target.value)}
+              placeholder="Razorpay key id"
+            />
+            <Input
+              value={keySecret}
+              onChange={(event) => setKeySecret(event.target.value)}
+              placeholder={
+                selectedConfig?.keySecretConfigured
+                  ? 'Secret configured'
+                  : 'Razorpay key secret'
+              }
+              type="password"
+            />
+            <Input
+              value={webhookSecret}
+              onChange={(event) => setWebhookSecret(event.target.value)}
+              placeholder={
+                selectedConfig?.webhookSecretConfigured
+                  ? 'Webhook secret configured'
+                  : 'Webhook secret'
+              }
+              type="password"
+            />
+            <div className="flex flex-wrap items-center gap-4 rounded-md border border-input bg-background px-3 py-2 text-sm">
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={isActive}
+                  onChange={(event) => setIsActive(event.target.checked)}
+                />
+                Active
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={makeDefault}
+                  onChange={(event) => setMakeDefault(event.target.checked)}
+                />
+                Use for checkout
+              </label>
+            </div>
+          </div>
+
+          {message ? <p className="text-sm font-medium text-red-600">{message}</p> : null}
+
+          <div className="flex flex-wrap gap-3">
+            <Button onClick={saveConfig} disabled={working || !keyId.trim()}>
+              {working ? 'Saving...' : 'Save keys'}
+            </Button>
+            <Button onClick={activateMode} variant="outline" disabled={working}>
+              {working ? 'Activating...' : `Activate ${mode === 'live' ? 'Production' : 'Test'}`}
+            </Button>
+          </div>
+        </div>
+      </ModalShell>
+    </>
   )
 }
 
