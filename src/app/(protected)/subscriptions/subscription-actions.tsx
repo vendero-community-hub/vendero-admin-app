@@ -50,6 +50,10 @@ async function requestJson(path: string, body?: Record<string, unknown>, method 
   return response.json().catch(() => ({}))
 }
 
+function gatewaySourceLabel(source?: string | null) {
+  return source === 'db' ? 'DB + Redis' : 'empty'
+}
+
 type Plan = {
   id: number
   code: string
@@ -676,6 +680,24 @@ export function PaymentGatewaySettingsButton({
     }
   }
 
+  async function deleteConfig() {
+    const confirmed = window.confirm(
+      `Delete Razorpay ${mode === 'live' ? 'Production' : 'Test'} keys?`
+    )
+    if (!confirmed) return
+
+    setWorking(true)
+    setMessage(null)
+    try {
+      await requestJson(`/api/v1/admin/subscriptions/payment-gateway/${mode}`, undefined, 'DELETE')
+      window.location.reload()
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Unable to delete gateway settings')
+    } finally {
+      setWorking(false)
+    }
+  }
+
   return (
     <>
       <Button onClick={() => setOpen(true)} variant="outline">
@@ -699,7 +721,7 @@ export function PaymentGatewaySettingsButton({
             </div>
             <div className="rounded-xl border border-border/70 bg-background/40 p-4">
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Source</p>
-              <p className="mt-2 text-sm font-medium">{activeConfig?.source ?? 'empty'}</p>
+              <p className="mt-2 text-sm font-medium">{gatewaySourceLabel(activeConfig?.source)}</p>
             </div>
           </div>
 
@@ -772,6 +794,9 @@ export function PaymentGatewaySettingsButton({
             </Button>
             <Button onClick={activateMode} variant="outline" disabled={working}>
               {working ? 'Activating...' : `Activate ${mode === 'live' ? 'Production' : 'Test'}`}
+            </Button>
+            <Button onClick={deleteConfig} variant="outline" disabled={working || !selectedConfig?.source}>
+              {working ? 'Deleting...' : 'Delete keys'}
             </Button>
           </div>
         </div>
