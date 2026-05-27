@@ -90,7 +90,13 @@ export function AdminAuthPanel() {
         throw new Error(data?.message ?? payload?.message ?? payload?.error?.message ?? 'Unable to request OTP')
       }
 
-      setRetryAfterSeconds(0)
+      setRetryAfterSeconds(
+        typeof data.retryAfterSeconds === 'number'
+          ? data.retryAfterSeconds
+          : typeof payload.retryAfterSeconds === 'number'
+            ? payload.retryAfterSeconds
+            : 0
+      )
       setStage('verify')
       setMessage(
         SHOW_DEV_OTP && data.devOtpCode

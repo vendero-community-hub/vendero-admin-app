@@ -30,6 +30,8 @@ const PAGE_PERMISSION_BY_PATH: Array<{ prefix: string; permission: string }> = [
   { prefix: '/whatsapp', permission: 'whatsapp_admin' },
   { prefix: '/server', permission: 'server' },
   { prefix: '/links', permission: 'links' },
+  { prefix: '/landing', permission: 'landing' },
+  { prefix: '/features', permission: 'features' },
   { prefix: '/worker-queues', permission: 'worker_queues' },
   { prefix: '/audit-logs', permission: 'audit_logs' },
 ]
@@ -100,6 +102,8 @@ export async function middleware(request: NextRequest) {
         whatsapp_admin: '/whatsapp',
         server: '/server',
         links: '/links',
+        landing: '/landing',
+        features: '/features',
         worker_queues: '/worker-queues',
         audit_logs: '/audit-logs',
       }

@@ -25,6 +25,18 @@ function getAdminToken() {
   return tokenEntry?.split('=')[1] ?? null
 }
 
+function formatOtpCooldown(seconds: number) {
+  const totalSeconds = Math.max(0, Math.ceil(Number(seconds) || 0))
+  const minutes = Math.floor(totalSeconds / 60)
+  const remainingSeconds = totalSeconds % 60
+
+  if (minutes <= 0) {
+    return `${remainingSeconds}s`
+  }
+
+  return `${minutes}m ${String(remainingSeconds).padStart(2, '0')}s`
+}
+
 async function requestJson(path: string, body?: Record<string, unknown>, method = 'POST') {
   const token = getAdminToken()
   let response: Response
@@ -44,7 +56,16 @@ async function requestJson(path: string, body?: Record<string, unknown>, method 
 
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}))
-    throw new Error(payload?.message ?? payload?.error?.message ?? 'Request failed')
+    const error = new Error(payload?.message ?? payload?.error?.message ?? 'Request failed') as Error & {
+      retryAfterSeconds?: number
+    }
+    const retryAfterSeconds = Number(
+      payload?.retryAfterSeconds ?? payload?.error?.retryAfterSeconds ?? payload?.data?.retryAfterSeconds
+    )
+    if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
+      error.retryAfterSeconds = Math.ceil(retryAfterSeconds)
+    }
+    throw error
   }
 
   return response.json().catch(() => ({}))
@@ -52,6 +73,12 @@ async function requestJson(path: string, body?: Record<string, unknown>, method 
 
 function gatewaySourceLabel(source?: string | null) {
   return source === 'db' ? 'DB + Redis' : 'empty'
+}
+
+function extractApiData<T>(payload: unknown): T {
+  const record = payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {}
+  const data = record.data && typeof record.data === 'object' ? (record.data as Record<string, unknown>) : null
+  return ((data?.data ?? record.data ?? payload) as T)
 }
 
 type Plan = {
@@ -86,6 +113,8 @@ export type PaymentGatewaySummary = {
     mode: 'test' | 'live'
     modeLabel: string
     keyId: string | null
+    maskedKeyId?: string | null
+    keyIdRevealed?: boolean
     configured: boolean
     source: string | null
   }
@@ -94,6 +123,12 @@ export type PaymentGatewaySummary = {
     mode: 'test' | 'live'
     modeLabel: string
     keyId: string | null
+    maskedKeyId?: string | null
+    keyIdRevealed?: boolean
+    keySecret?: string | null
+    keySecretRevealed?: boolean
+    webhookSecret?: string | null
+    webhookSecretRevealed?: boolean
     configured: boolean
     keySecretConfigured: boolean
     webhookSecretConfigured: boolean
@@ -102,6 +137,19 @@ export type PaymentGatewaySummary = {
     source: string | null
     updatedAt: string | null
   }>
+}
+
+type PaymentGatewayOtpAction =
+  | 'reveal_gateway_keys'
+  | 'save_gateway_keys'
+  | 'activate_gateway_mode'
+  | 'delete_gateway_keys'
+
+const PAYMENT_GATEWAY_OTP_ACTION_LABELS: Record<PaymentGatewayOtpAction, string> = {
+  reveal_gateway_keys: 'view active key',
+  save_gateway_keys: 'save key changes',
+  activate_gateway_mode: 'change checkout mode',
+  delete_gateway_keys: 'delete keys',
 }
 
 function ModalShell({
@@ -159,6 +207,138 @@ function buildFeaturePayload(featureState: Record<string, boolean>) {
   }))
 }
 
+function configNumber(config: Record<string, unknown> | undefined, key: string, fallback = 0) {
+  const value = Number(config?.[key] ?? fallback)
+  return Number.isFinite(value) ? value : fallback
+}
+
+function configBoolean(config: Record<string, unknown> | undefined, key: string, fallback = false) {
+  const value = config?.[key]
+  return typeof value === 'boolean' ? value : fallback
+}
+
+function configString(config: Record<string, unknown> | undefined, key: string, fallback = '') {
+  const value = config?.[key]
+  return typeof value === 'string' ? value : fallback
+}
+
+function buildBillingFeatureConfig(
+  existingConfig: Record<string, unknown> | undefined,
+  values: {
+    trialEnabled: boolean
+    freeTrialDays: string
+    trialPaymentTiming: string
+    firstPaymentAmount: string
+    firstPaymentCycles: string
+  }
+) {
+  const trialDays = values.trialEnabled ? Number(values.freeTrialDays || 0) : 0
+  const firstPaymentAmount = Number(values.firstPaymentAmount || 0)
+  const firstPaymentCycles = Number(values.firstPaymentCycles || 0)
+
+  return {
+    ...(existingConfig ?? {}),
+    freeTrialDays: Number.isFinite(trialDays) ? trialDays : 0,
+    trialEnabled: values.trialEnabled,
+    trialPaymentTiming: values.trialPaymentTiming,
+    firstPaymentAmount: Number.isFinite(firstPaymentAmount) ? firstPaymentAmount : 0,
+    firstPaymentCycles: Number.isFinite(firstPaymentCycles) ? firstPaymentCycles : 0,
+  }
+}
+
+function BillingPolicyFields({
+  trialEnabled,
+  freeTrialDays,
+  trialPaymentTiming,
+  firstPaymentAmount,
+  firstPaymentCycles,
+  onTrialEnabledChange,
+  onFreeTrialDaysChange,
+  onTrialPaymentTimingChange,
+  onFirstPaymentAmountChange,
+  onFirstPaymentCyclesChange,
+}: {
+  trialEnabled: boolean
+  freeTrialDays: string
+  trialPaymentTiming: string
+  firstPaymentAmount: string
+  firstPaymentCycles: string
+  onTrialEnabledChange: (value: boolean) => void
+  onFreeTrialDaysChange: (value: string) => void
+  onTrialPaymentTimingChange: (value: string) => void
+  onFirstPaymentAmountChange: (value: string) => void
+  onFirstPaymentCyclesChange: (value: string) => void
+}) {
+  return (
+    <div className="mt-4 rounded-2xl border border-border/70 bg-background/35 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold">Billing offer controls</p>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+            Set the first payment amount, how long that amount covers, and whether checkout happens before or after a free trial.
+          </p>
+        </div>
+        <label className="flex items-center gap-2 text-sm font-medium">
+          <input
+            type="checkbox"
+            checked={trialEnabled}
+            onChange={(event) => onTrialEnabledChange(event.target.checked)}
+          />
+          Free trial active
+        </label>
+      </div>
+
+      <div className="mt-4 grid gap-3 md:grid-cols-2">
+        <label className="space-y-1 text-sm">
+          <span className="text-muted-foreground">Free trial days</span>
+          <Input
+            value={freeTrialDays}
+            onChange={(event) => onFreeTrialDaysChange(event.target.value)}
+            type="number"
+            min="0"
+            disabled={!trialEnabled}
+          />
+        </label>
+        <label className="space-y-1 text-sm">
+          <span className="text-muted-foreground">First payment timing</span>
+          <select
+            value={trialPaymentTiming}
+            onChange={(event) => onTrialPaymentTimingChange(event.target.value)}
+            className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+            disabled={!trialEnabled}
+          >
+            <option value="before_trial">Take first payment before free trial</option>
+            <option value="after_trial">Take first payment after free trial</option>
+          </select>
+        </label>
+        <label className="space-y-1 text-sm">
+          <span className="text-muted-foreground">First payment amount</span>
+          <Input
+            value={firstPaymentAmount}
+            onChange={(event) => onFirstPaymentAmountChange(event.target.value)}
+            placeholder="49"
+            type="number"
+            min="0"
+          />
+        </label>
+        <label className="space-y-1 text-sm">
+          <span className="text-muted-foreground">First payment cycles / months</span>
+          <Input
+            value={firstPaymentCycles}
+            onChange={(event) => onFirstPaymentCyclesChange(event.target.value)}
+            placeholder="3"
+            type="number"
+            min="0"
+          />
+        </label>
+      </div>
+      <p className="mt-3 text-xs leading-5 text-muted-foreground">
+        After free trial means the mobile app starts trial access without opening Razorpay. When the trial expires, access is stopped and the vendor renews from the subscription card.
+      </p>
+    </div>
+  )
+}
+
 function FeatureSelector({
   featureState,
   onChange,
@@ -200,7 +380,11 @@ export function CreatePlanButton() {
   const [priceAmount, setPriceAmount] = useState('2499')
   const [durationDays, setDurationDays] = useState('30')
   const [billingInterval, setBillingInterval] = useState('monthly')
+  const [trialEnabled, setTrialEnabled] = useState(true)
   const [freeTrialDays, setFreeTrialDays] = useState('7')
+  const [trialPaymentTiming, setTrialPaymentTiming] = useState('before_trial')
+  const [firstPaymentAmount, setFirstPaymentAmount] = useState('49')
+  const [firstPaymentCycles, setFirstPaymentCycles] = useState('1')
   const [isPublic, setIsPublic] = useState(true)
   const [isDefault, setIsDefault] = useState(false)
   const [requiresPaymentVerification, setRequiresPaymentVerification] = useState(true)
@@ -219,10 +403,13 @@ export function CreatePlanButton() {
         isPublic,
         isDefault,
         requiresPaymentVerification,
-        featureConfig: {
-          freeTrialDays: Number(freeTrialDays || 7),
-          trialEnabled: Number(freeTrialDays || 0) > 0,
-        },
+        featureConfig: buildBillingFeatureConfig(undefined, {
+          trialEnabled,
+          freeTrialDays,
+          trialPaymentTiming,
+          firstPaymentAmount,
+          firstPaymentCycles,
+        }),
         features: buildFeaturePayload(featureState),
       })
       window.location.reload()
@@ -255,12 +442,6 @@ export function CreatePlanButton() {
             placeholder="Duration days"
             type="number"
           />
-          <Input
-            value={freeTrialDays}
-            onChange={(event) => setFreeTrialDays(event.target.value)}
-            placeholder="Free trial days"
-            type="number"
-          />
           <select
             value={billingInterval}
             onChange={(event) => setBillingInterval(event.target.value)}
@@ -273,6 +454,18 @@ export function CreatePlanButton() {
             <option value="custom">Custom</option>
           </select>
         </div>
+        <BillingPolicyFields
+          trialEnabled={trialEnabled}
+          freeTrialDays={freeTrialDays}
+          trialPaymentTiming={trialPaymentTiming}
+          firstPaymentAmount={firstPaymentAmount}
+          firstPaymentCycles={firstPaymentCycles}
+          onTrialEnabledChange={setTrialEnabled}
+          onFreeTrialDaysChange={setFreeTrialDays}
+          onTrialPaymentTimingChange={setTrialPaymentTiming}
+          onFirstPaymentAmountChange={setFirstPaymentAmount}
+          onFirstPaymentCyclesChange={setFirstPaymentCycles}
+        />
         <textarea
           value={description}
           onChange={(event) => setDescription(event.target.value)}
@@ -320,8 +513,30 @@ export function UpdatePlanButton({ plan }: { plan: Plan }) {
   const [description, setDescription] = useState(plan.description ?? '')
   const [priceAmount, setPriceAmount] = useState(String(plan.priceAmount))
   const [durationDays, setDurationDays] = useState(String(plan.durationDays ?? 30))
+  const [trialEnabled, setTrialEnabled] = useState(
+    configBoolean(plan.featureConfig, 'trialEnabled', configNumber(plan.featureConfig, 'freeTrialDays', 7) > 0)
+  )
   const [freeTrialDays, setFreeTrialDays] = useState(
     String(Number(plan.featureConfig?.freeTrialDays ?? 7))
+  )
+  const [trialPaymentTiming, setTrialPaymentTiming] = useState(
+    configString(
+      plan.featureConfig,
+      'trialPaymentTiming',
+      configString(plan.featureConfig, 'trialCheckoutMode', 'before_trial')
+    )
+  )
+  const [firstPaymentAmount, setFirstPaymentAmount] = useState(
+    String(configNumber(plan.featureConfig, 'firstPaymentAmount', 0))
+  )
+  const [firstPaymentCycles, setFirstPaymentCycles] = useState(
+    String(
+      configNumber(
+        plan.featureConfig,
+        'firstPaymentCycles',
+        configNumber(plan.featureConfig, 'firstPaymentMonths', 0)
+      )
+    )
   )
   const [isActive, setIsActive] = useState(plan.isActive)
   const [isPublic, setIsPublic] = useState(plan.isPublic)
@@ -343,10 +558,13 @@ export function UpdatePlanButton({ plan }: { plan: Plan }) {
           isPublic,
           isDefault,
           requiresPaymentVerification,
-          featureConfig: {
-            freeTrialDays: Number(freeTrialDays || 7),
-            trialEnabled: Number(freeTrialDays || 0) > 0,
-          },
+          featureConfig: buildBillingFeatureConfig(plan.featureConfig, {
+            trialEnabled,
+            freeTrialDays,
+            trialPaymentTiming,
+            firstPaymentAmount,
+            firstPaymentCycles,
+          }),
           features: buildFeaturePayload(featureState),
         },
         'PUT'
@@ -390,8 +608,19 @@ export function UpdatePlanButton({ plan }: { plan: Plan }) {
             <Input value={name} onChange={(event) => setName(event.target.value)} />
             <Input value={priceAmount} onChange={(event) => setPriceAmount(event.target.value)} type="number" />
             <Input value={durationDays} onChange={(event) => setDurationDays(event.target.value)} type="number" />
-            <Input value={freeTrialDays} onChange={(event) => setFreeTrialDays(event.target.value)} type="number" />
           </div>
+          <BillingPolicyFields
+            trialEnabled={trialEnabled}
+            freeTrialDays={freeTrialDays}
+            trialPaymentTiming={trialPaymentTiming}
+            firstPaymentAmount={firstPaymentAmount}
+            firstPaymentCycles={firstPaymentCycles}
+            onTrialEnabledChange={setTrialEnabled}
+            onFreeTrialDaysChange={setFreeTrialDays}
+            onTrialPaymentTimingChange={setTrialPaymentTiming}
+            onFirstPaymentAmountChange={setFirstPaymentAmount}
+            onFirstPaymentCyclesChange={setFirstPaymentCycles}
+          />
           <textarea
             value={description}
             onChange={(event) => setDescription(event.target.value)}
@@ -618,32 +847,133 @@ export function PaymentGatewaySettingsButton({
   const initialMode = summary?.selectedMode ?? 'test'
   const [open, setOpen] = useState(false)
   const [working, setWorking] = useState(false)
+  const [secureSummary, setSecureSummary] = useState<PaymentGatewaySummary | null>(null)
   const [mode, setMode] = useState<'test' | 'live'>(initialMode)
   const [keyId, setKeyId] = useState('')
   const [keySecret, setKeySecret] = useState('')
   const [webhookSecret, setWebhookSecret] = useState('')
   const [isActive, setIsActive] = useState(true)
   const [makeDefault, setMakeDefault] = useState(true)
+  const [otpChallengeId, setOtpChallengeId] = useState('')
+  const [otpCode, setOtpCode] = useState('')
+  const [otpAction, setOtpAction] = useState<PaymentGatewayOtpAction | null>(null)
+  const [otpCooldownSeconds, setOtpCooldownSeconds] = useState(0)
+  const [keysRevealed, setKeysRevealed] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
 
-  const activeConfig = summary?.configs?.find((config) => config.mode === summary.selectedMode) ?? null
-  const selectedConfig = summary?.configs?.find((config) => config.mode === mode) ?? null
+  const effectiveSummary = secureSummary ?? summary
+  const otpCooldownActive = otpCooldownSeconds > 0
+  const activeConfig = effectiveSummary?.configs?.find((config) => config.mode === effectiveSummary.selectedMode) ?? null
+  const selectedConfig = effectiveSummary?.configs?.find((config) => config.mode === mode) ?? null
+  const activeKeyLabel = activeConfig?.keyIdRevealed
+    ? activeConfig.keyId ?? 'Not configured'
+    : activeConfig?.configured
+      ? 'Verify OTP to view'
+      : 'Not configured'
 
   useEffect(() => {
     setMode(initialMode)
   }, [initialMode])
 
   useEffect(() => {
-    const config = summary?.configs?.find((item) => item.mode === mode)
-    setKeyId(config?.keyId ?? '')
-    setKeySecret('')
-    setWebhookSecret('')
+    const config = effectiveSummary?.configs?.find((item) => item.mode === mode)
+    setKeyId(config?.keyIdRevealed ? config.keyId ?? '' : '')
+    setKeySecret(config?.keySecretRevealed ? config.keySecret ?? '' : '')
+    setWebhookSecret(config?.webhookSecretRevealed ? config.webhookSecret ?? '' : '')
     setIsActive(config?.isActive ?? true)
-    setMakeDefault(config?.isDefault ?? mode === summary?.selectedMode)
+    setMakeDefault(config?.isDefault ?? mode === effectiveSummary?.selectedMode)
     setMessage(null)
-  }, [mode, summary])
+  }, [mode, effectiveSummary])
+
+  useEffect(() => {
+    if (!otpCooldownActive) return undefined
+
+    const timer = window.setInterval(() => {
+      setOtpCooldownSeconds((current) => Math.max(current - 1, 0))
+    }, 1000)
+
+    return () => window.clearInterval(timer)
+  }, [otpCooldownActive])
+
+  function clearOtp() {
+    setOtpChallengeId('')
+    setOtpCode('')
+    setOtpAction(null)
+  }
+
+  async function requestGatewayOtp(action: PaymentGatewayOtpAction) {
+    if (otpCooldownActive) return
+
+    setWorking(true)
+    setMessage(null)
+    try {
+      const payload = await requestJson('/api/v1/admin/subscriptions/payment-gateway/otp/request', { action })
+      const data = extractApiData<{ challengeId: string; devOtpCode?: string; retryAfterSeconds?: number }>(payload)
+      setOtpChallengeId(data.challengeId)
+      setOtpCode(data.devOtpCode ?? '')
+      setOtpAction(action)
+      setOtpCooldownSeconds(data.retryAfterSeconds ?? 60)
+      setMessage(
+        data.devOtpCode
+          ? `OTP generated for ${PAYMENT_GATEWAY_OTP_ACTION_LABELS[action]}: ${data.devOtpCode}`
+          : `OTP sent to your admin phone for ${PAYMENT_GATEWAY_OTP_ACTION_LABELS[action]}.`
+      )
+    } catch (error) {
+      const retryAfterSeconds = Number(
+        typeof error === 'object' && error !== null && 'retryAfterSeconds' in error
+          ? error.retryAfterSeconds
+          : 0
+      )
+      if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
+        setOtpCooldownSeconds(Math.ceil(retryAfterSeconds))
+      }
+      const fallbackMessage = error instanceof Error ? error.message : 'Unable to request OTP'
+      setMessage(
+        Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+          ? `${fallbackMessage} Try again in ${formatOtpCooldown(retryAfterSeconds)}.`
+          : fallbackMessage
+      )
+    } finally {
+      setWorking(false)
+    }
+  }
+
+  function requireOtpReady(action: PaymentGatewayOtpAction) {
+    if (!otpChallengeId || !otpCode.trim()) {
+      setMessage(`Request OTP for ${PAYMENT_GATEWAY_OTP_ACTION_LABELS[action]} and enter the code first.`)
+      return false
+    }
+    if (otpAction !== action) {
+      setMessage(`Request a fresh OTP for ${PAYMENT_GATEWAY_OTP_ACTION_LABELS[action]}.`)
+      return false
+    }
+    return true
+  }
+
+  async function revealKeys() {
+    if (!requireOtpReady('reveal_gateway_keys')) return
+
+    setWorking(true)
+    setMessage(null)
+    try {
+      const payload = await requestJson('/api/v1/admin/subscriptions/payment-gateway/reveal', {
+        challengeId: otpChallengeId,
+        otpCode,
+      })
+      const data = extractApiData<PaymentGatewaySummary>(payload)
+      setSecureSummary(data)
+      setKeysRevealed(true)
+      clearOtp()
+      setMessage('Gateway keys revealed for this verified session.')
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Unable to verify OTP')
+    } finally {
+      setWorking(false)
+    }
+  }
 
   async function saveConfig() {
+    if (!requireOtpReady('save_gateway_keys')) return
     setWorking(true)
     setMessage(null)
     try {
@@ -656,6 +986,8 @@ export function PaymentGatewaySettingsButton({
           webhookSecret: webhookSecret || null,
           isActive,
           makeDefault,
+          otpChallengeId,
+          otpCode,
         },
         'PUT'
       )
@@ -668,10 +1000,15 @@ export function PaymentGatewaySettingsButton({
   }
 
   async function activateMode() {
+    if (!requireOtpReady('activate_gateway_mode')) return
     setWorking(true)
     setMessage(null)
     try {
-      await requestJson('/api/v1/admin/subscriptions/payment-gateway/mode', { mode })
+      await requestJson('/api/v1/admin/subscriptions/payment-gateway/mode', {
+        mode,
+        otpChallengeId,
+        otpCode,
+      })
       window.location.reload()
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Unable to activate gateway mode')
@@ -681,6 +1018,7 @@ export function PaymentGatewaySettingsButton({
   }
 
   async function deleteConfig() {
+    if (!requireOtpReady('delete_gateway_keys')) return
     const confirmed = window.confirm(
       `Delete Razorpay ${mode === 'live' ? 'Production' : 'Test'} keys?`
     )
@@ -689,7 +1027,11 @@ export function PaymentGatewaySettingsButton({
     setWorking(true)
     setMessage(null)
     try {
-      await requestJson(`/api/v1/admin/subscriptions/payment-gateway/${mode}`, undefined, 'DELETE')
+      await requestJson(
+        `/api/v1/admin/subscriptions/payment-gateway/${mode}`,
+        { otpChallengeId, otpCode },
+        'DELETE'
+      )
       window.location.reload()
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Unable to delete gateway settings')
@@ -705,7 +1047,7 @@ export function PaymentGatewaySettingsButton({
       </Button>
       <ModalShell
         title="Payment gateway"
-        description={`${summary?.modeLabel ?? 'Test'} mode is selected for Razorpay checkout.`}
+        description={`${effectiveSummary?.modeLabel ?? 'Test'} mode is selected for Razorpay checkout.`}
         open={open}
         onClose={() => setOpen(false)}
       >
@@ -713,16 +1055,90 @@ export function PaymentGatewaySettingsButton({
           <div className="grid gap-3 md:grid-cols-3">
             <div className="rounded-xl border border-border/70 bg-background/40 p-4">
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Active mode</p>
-              <p className="mt-2 text-lg font-semibold">{summary?.modeLabel ?? 'Test'}</p>
+              <p className="mt-2 text-lg font-semibold">{effectiveSummary?.modeLabel ?? 'Test'}</p>
             </div>
             <div className="rounded-xl border border-border/70 bg-background/40 p-4">
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Key id</p>
-              <p className="mt-2 truncate text-sm font-medium">{activeConfig?.keyId ?? 'Not configured'}</p>
+              <p className="mt-2 truncate text-sm font-medium">
+                {activeKeyLabel}
+              </p>
             </div>
             <div className="rounded-xl border border-border/70 bg-background/40 p-4">
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Source</p>
               <p className="mt-2 text-sm font-medium">{gatewaySourceLabel(activeConfig?.source)}</p>
             </div>
+          </div>
+
+          <div className="rounded-xl border border-border/70 bg-background/40 p-4">
+            <p className="text-sm font-semibold">Payment gateway OTP</p>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              OTP is required before viewing the active Razorpay key, saving key changes, activating a mode, or deleting keys.
+            </p>
+            <div className="mt-3 grid gap-3 md:grid-cols-[1fr_auto]">
+              <Input
+                value={otpCode}
+                onChange={(event) => setOtpCode(event.target.value)}
+                placeholder="6 digit OTP"
+                inputMode="numeric"
+                maxLength={6}
+              />
+              <Button
+                type="button"
+                onClick={() => requestGatewayOtp('reveal_gateway_keys')}
+                variant="outline"
+                disabled={working || otpCooldownActive}
+              >
+                {otpCooldownActive ? `Retry in ${formatOtpCooldown(otpCooldownSeconds)}` : 'View key OTP'}
+              </Button>
+            </div>
+            {otpCooldownActive ? (
+              <p className="mt-2 text-xs font-medium text-muted-foreground">
+                OTP limit active. You can request again in {formatOtpCooldown(otpCooldownSeconds)}.
+              </p>
+            ) : null}
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button
+                type="button"
+                onClick={() => requestGatewayOtp('save_gateway_keys')}
+                variant="outline"
+                disabled={working || otpCooldownActive}
+              >
+                {otpCooldownActive ? `Retry in ${formatOtpCooldown(otpCooldownSeconds)}` : 'Save OTP'}
+              </Button>
+              <Button
+                type="button"
+                onClick={() => requestGatewayOtp('activate_gateway_mode')}
+                variant="outline"
+                disabled={working || otpCooldownActive}
+              >
+                {otpCooldownActive ? `Retry in ${formatOtpCooldown(otpCooldownSeconds)}` : 'Mode OTP'}
+              </Button>
+              <Button
+                type="button"
+                onClick={() => requestGatewayOtp('delete_gateway_keys')}
+                variant="outline"
+                disabled={working || otpCooldownActive}
+              >
+                {otpCooldownActive ? `Retry in ${formatOtpCooldown(otpCooldownSeconds)}` : 'Delete OTP'}
+              </Button>
+              <Button
+                type="button"
+                onClick={revealKeys}
+                disabled={
+                  working ||
+                  otpAction !== 'reveal_gateway_keys' ||
+                  !otpChallengeId ||
+                  otpCode.trim().length !== 6
+                }
+              >
+                {keysRevealed ? 'Key verified' : 'Verify & view key'}
+              </Button>
+            </div>
+            {otpAction ? (
+              <p className="mt-2 text-xs text-muted-foreground">
+                OTP ready for {PAYMENT_GATEWAY_OTP_ACTION_LABELS[otpAction]}.
+              </p>
+            ) : null}
           </div>
 
           <div className="inline-flex rounded-lg border border-border bg-background p-1">
@@ -744,27 +1160,33 @@ export function PaymentGatewaySettingsButton({
             <Input
               value={keyId}
               onChange={(event) => setKeyId(event.target.value)}
-              placeholder="Razorpay key id"
+              placeholder={
+                selectedConfig?.keyId
+                  ? 'Razorpay key id'
+                  : selectedConfig?.configured
+                    ? 'Existing key hidden - verify OTP to view or replace'
+                    : 'Razorpay key id'
+              }
             />
             <Input
               value={keySecret}
               onChange={(event) => setKeySecret(event.target.value)}
               placeholder={
                 selectedConfig?.keySecretConfigured
-                  ? 'Secret configured'
+                  ? 'Secret configured - verify OTP to view or replace'
                   : 'Razorpay key secret'
               }
-              type="password"
+              type={selectedConfig?.keySecretRevealed ? 'text' : 'password'}
             />
             <Input
               value={webhookSecret}
               onChange={(event) => setWebhookSecret(event.target.value)}
               placeholder={
                 selectedConfig?.webhookSecretConfigured
-                  ? 'Webhook secret configured'
+                  ? 'Webhook secret configured - verify OTP to view or replace'
                   : 'Webhook secret'
               }
-              type="password"
+              type={selectedConfig?.webhookSecretRevealed ? 'text' : 'password'}
             />
             <div className="flex flex-wrap items-center gap-4 rounded-md border border-input bg-background px-3 py-2 text-sm">
               <label className="flex items-center gap-2">

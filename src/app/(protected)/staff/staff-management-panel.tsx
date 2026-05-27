@@ -43,6 +43,7 @@ const DEFAULT_PERMISSION_OPTIONS: PermissionDefinition[] = [
   { key: 'whatsapp_admin', label: 'WhatsApp Business', description: 'Manage templates, opt-ins, message logs, and usage.' },
   { key: 'server', label: 'Server', description: 'View server and queue telemetry.' },
   { key: 'links', label: 'White Label', description: 'Audit public white-label links.' },
+  { key: 'landing', label: 'Landing Requests', description: 'Review public landing page requests.' },
   { key: 'worker_queues', label: 'Worker Queues', description: 'Inspect queues, dead letters, and retries.' },
   { key: 'audit_logs', label: 'Audit Logs', description: 'Browse platform audit events.' },
 ]

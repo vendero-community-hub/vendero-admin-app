@@ -1,6 +1,6 @@
-'use client'
+"use client";
 
-import { useMemo, useState } from 'react'
+import { useMemo, useState } from "react";
 import {
   Building2,
   CheckCircle2,
@@ -11,140 +11,163 @@ import {
   ShieldAlert,
   ShieldCheck,
   Store,
+  Trash2,
   UserRoundCheck,
   UserRoundX,
   X,
-} from 'lucide-react'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
+} from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
+} from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 
 type BadgeTone =
-  | 'default'
-  | 'secondary'
-  | 'outline'
-  | 'success'
-  | 'warning'
-  | 'danger'
+  | "default"
+  | "secondary"
+  | "outline"
+  | "success"
+  | "warning"
+  | "danger";
 
 export type VendorRecord = {
-  id: number
-  userId: number
-  businessName: string
-  contactName: string | null
-  phone: string | null
-  email: string | null
-  city: string | null
-  state: string | null
-  isActive: boolean
-  subscriptionTier: string
-  lastLoginAt: string | null
-  lastSeenAt: string | null
-  verificationStatus: 'pending' | 'approved' | 'rejected'
-  isVerified: boolean
-  onboardingCompleted: boolean
-  createdAt: string | null
-  updatedAt: string | null
+  id: number;
+  userId: number;
+  businessName: string;
+  contactName: string | null;
+  phone: string | null;
+  email: string | null;
+  city: string | null;
+  state: string | null;
+  isActive: boolean;
+  subscriptionTier: string;
+  lastLoginAt: string | null;
+  lastSeenAt: string | null;
+  verificationStatus: "pending" | "approved" | "rejected";
+  isVerified: boolean;
+  onboardingCompleted: boolean;
+  createdAt: string | null;
+  updatedAt: string | null;
   subscription: {
-    status: string
-    planName: string
-    planCode: string | null
-    paymentStatus: string
-    expiresAt: string | null
-    nextBillingAt: string | null
-  }
+    status: string;
+    planName: string;
+    planCode: string | null;
+    paymentStatus: string;
+    expiresAt: string | null;
+    nextBillingAt: string | null;
+  };
   kyc: {
-    totalDocuments: number
-    pendingDocuments: number
-    approvedDocuments: number
-    rejectedDocuments: number
-    manualReviewDocuments: number
-  }
+    totalDocuments: number;
+    pendingDocuments: number;
+    approvedDocuments: number;
+    rejectedDocuments: number;
+    manualReviewDocuments: number;
+  };
   marketplace: {
-    id: number | null
-    isPublic: boolean
-    profileStatus: 'draft' | 'live' | 'hidden'
-    reviewAverage: number
-    reviewCount: number
-    cabListings: number
-    serviceListings: number
-    activeLeads: number
-    logoUrl: string | null
-  }
+    id: number | null;
+    isPublic: boolean;
+    profileStatus: "draft" | "live" | "hidden";
+    reviewAverage: number;
+    reviewCount: number;
+    cabListings: number;
+    serviceListings: number;
+    activeLeads: number;
+    logoUrl: string | null;
+  };
   operations: {
-    activeTrips: number
-    acceptedTrips: number
-  }
-}
+    activeTrips: number;
+    acceptedTrips: number;
+  };
+};
 
 export type VendorManagementOverview = {
-  generatedAt: string
+  generatedAt: string;
   summary: {
-    total: number
-    active: number
-    inactive: number
-    pendingKyc: number
-    approvedKyc: number
-    rejectedKyc: number
-    activeSubscriptions: number
-    pendingSubscriptionPayments: number
-    expiredSubscriptions: number
-    marketplaceLive: number
-    marketplaceHidden: number
-    marketplaceDraft: number
-  }
-  vendors: VendorRecord[]
-}
+    total: number;
+    active: number;
+    inactive: number;
+    pendingKyc: number;
+    approvedKyc: number;
+    rejectedKyc: number;
+    activeSubscriptions: number;
+    pendingSubscriptionPayments: number;
+    expiredSubscriptions: number;
+    marketplaceLive: number;
+    marketplaceHidden: number;
+    marketplaceDraft: number;
+  };
+  vendors: VendorRecord[];
+};
 
 type VendorDetail = {
-  vendor: VendorRecord
+  vendor: VendorRecord;
   documents: Array<{
-    id: number
-    documentType: string
-    status: string
-    providerName: string | null
-    providerStatus: string
-    verificationMode: string
-    reviewNotes: string | null
-    rejectionReason: string | null
-    createdAt: string
-    updatedAt: string | null
-  }>
+    id: number;
+    documentType: string;
+    status: string;
+    providerName: string | null;
+    providerStatus: string;
+    verificationMode: string;
+    reviewNotes: string | null;
+    rejectionReason: string | null;
+    createdAt: string;
+    updatedAt: string | null;
+  }>;
+  cabs: Array<{
+    id: number;
+    cabNumber: string | null;
+    color: string | null;
+    status: string | null;
+    vendorStatus: string | null;
+    categoryName: string | null;
+    modelName: string | null;
+    verificationStatus: VendorRecord["verificationStatus"];
+    verifiedAt: string | null;
+  }>;
+  drivers: Array<{
+    id: number;
+    fullName: string | null;
+    phone: string | null;
+    licenseNumber: string | null;
+    verificationStatus: VendorRecord["verificationStatus"];
+    phoneVerifiedAt: string | null;
+    verifiedAt: string | null;
+  }>;
   recentTrips: Array<{
-    id: number
-    status: string
-    tripType: string
-    pickupDatetime: string | null
-    rateTotal: string | null
-    createdAt: string
-    updatedAt: string | null
-  }>
+    id: number;
+    status: string;
+    tripType: string;
+    pickupDatetime: string | null;
+    rateTotal: string | null;
+    createdAt: string;
+    updatedAt: string | null;
+  }>;
   deviceSessions: Array<{
-    id: number
-    deviceLabel: string | null
-    platform: string | null
-    lastSeenAt: string | null
-    revokedAt: string | null
-    isCurrent: boolean
-    createdAt: string
-  }>
+    id: number;
+    deviceLabel: string | null;
+    platform: string | null;
+    lastSeenAt: string | null;
+    revokedAt: string | null;
+    isCurrent: boolean;
+    createdAt: string;
+  }>;
   subscriptionHistory: Array<{
-    id: number
-    action: string
-    notes: string | null
-    metadata: string | Record<string, unknown> | null
-    createdAt: string
-  }>
-}
+    id: number;
+    action: string;
+    notes: string | null;
+    metadata: string | Record<string, unknown> | null;
+    createdAt: string;
+  }>;
+};
 
-const EMPTY_SUMMARY: VendorManagementOverview['summary'] = {
+type ResourceType = "drivers" | "cabs";
+
+const EMPTY_SUMMARY: VendorManagementOverview["summary"] = {
   total: 0,
   active: 0,
   inactive: 0,
@@ -157,70 +180,74 @@ const EMPTY_SUMMARY: VendorManagementOverview['summary'] = {
   marketplaceLive: 0,
   marketplaceHidden: 0,
   marketplaceDraft: 0,
-}
+};
 
 function getAdminToken() {
   const tokenEntry = document.cookie
-    .split('; ')
-    .find((part) => part.startsWith('vendero_admin_access_token='))
+    .split("; ")
+    .find((part) => part.startsWith("vendero_admin_access_token="));
 
-  return tokenEntry?.split('=')[1] ?? null
+  return tokenEntry?.split("=")[1] ?? null;
 }
 
-async function requestJson(path: string, body?: Record<string, unknown>) {
-  const token = getAdminToken()
+async function requestJson(
+  path: string,
+  body?: Record<string, unknown>,
+  method = body ? "POST" : "GET",
+) {
+  const token = getAdminToken();
   const response = await fetch(path, {
-    method: body ? 'POST' : 'GET',
+    method,
     headers: {
-      'content-type': 'application/json',
-      authorization: token ? `Bearer ${token}` : '',
+      "content-type": "application/json",
+      authorization: token ? `Bearer ${token}` : "",
     },
     ...(body ? { body: JSON.stringify(body) } : {}),
-  })
+  });
 
-  const payload = await response.json().catch(() => ({}))
+  const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new Error(
-      payload?.message ?? payload?.error?.message ?? 'Request failed'
-    )
+      payload?.message ?? payload?.error?.message ?? "Request failed",
+    );
   }
 
-  return payload?.data?.data ?? payload?.data ?? payload
+  return payload?.data?.data ?? payload?.data ?? payload;
 }
 
 function formatDate(value: string | null | undefined) {
-  if (!value) return 'Never'
-  return new Intl.DateTimeFormat('en-IN', {
-    day: '2-digit',
-    month: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(new Date(value))
+  if (!value) return "Never";
+  return new Intl.DateTimeFormat("en-IN", {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
 }
 
 function statusTone(status: string): BadgeTone {
-  if (['active', 'approved', 'verified', 'live'].includes(status))
-    return 'success'
-  if (['rejected', 'failed', 'expired', 'hidden'].includes(status))
-    return 'danger'
-  if (['pending', 'pending_verification', 'draft', 'inactive'].includes(status))
-    return 'warning'
-  return 'secondary'
+  if (["active", "approved", "verified", "live"].includes(status))
+    return "success";
+  if (["rejected", "failed", "expired", "hidden"].includes(status))
+    return "danger";
+  if (["pending", "pending_verification", "draft", "inactive"].includes(status))
+    return "warning";
+  return "secondary";
 }
 
 function marketplaceLabel(vendor: VendorRecord) {
   if (
     vendor.marketplace.isPublic &&
-    vendor.marketplace.profileStatus === 'live'
+    vendor.marketplace.profileStatus === "live"
   )
-    return 'live'
-  return vendor.marketplace.profileStatus
+    return "live";
+  return vendor.marketplace.profileStatus;
 }
 
 function locationLabel(vendor: VendorRecord) {
   return (
-    [vendor.city, vendor.state].filter(Boolean).join(', ') || 'Location not set'
-  )
+    [vendor.city, vendor.state].filter(Boolean).join(", ") || "Location not set"
+  );
 }
 
 function MetricCard({
@@ -228,13 +255,13 @@ function MetricCard({
   value,
   note,
   icon: Icon,
-  tone = 'default',
+  tone = "default",
 }: {
-  label: string
-  value: number
-  note: string
-  icon: typeof Building2
-  tone?: BadgeTone
+  label: string;
+  value: number;
+  note: string;
+  icon: typeof Building2;
+  tone?: BadgeTone;
 }) {
   return (
     <Card className="border-border/70 bg-card/80">
@@ -258,21 +285,154 @@ function MetricCard({
         </Badge>
       </CardContent>
     </Card>
-  )
+  );
+}
+
+function ResourceVerificationList({
+  title,
+  rows,
+  resourceType,
+  vendor,
+  workingAction,
+  onUpdate,
+}: {
+  title: string;
+  rows: Array<VendorDetail["drivers"][number] | VendorDetail["cabs"][number]>;
+  resourceType: ResourceType;
+  vendor: VendorRecord;
+  workingAction: string | null;
+  onUpdate: (
+    vendor: VendorRecord,
+    resourceType: ResourceType,
+    resourceId: number,
+    verificationStatus: VendorRecord["verificationStatus"],
+  ) => void;
+}) {
+  return (
+    <div>
+      <p className="text-sm font-semibold">{title}</p>
+      <div className="mt-2 space-y-2">
+        {rows.map((resource) => {
+          const isDriver = resourceType === "drivers";
+          const driver = isDriver
+            ? (resource as VendorDetail["drivers"][number])
+            : null;
+          const cab = !isDriver
+            ? (resource as VendorDetail["cabs"][number])
+            : null;
+          const label =
+            driver?.fullName ??
+            cab?.cabNumber ??
+            cab?.modelName ??
+            cab?.categoryName ??
+            "Resource";
+          const meta = [
+            driver?.phone,
+            driver?.licenseNumber ? `DL ${driver.licenseNumber}` : null,
+            cab?.categoryName,
+            cab?.modelName,
+            cab?.color,
+          ]
+            .filter(Boolean)
+            .join(" - ");
+          const status = resource.verificationStatus ?? "pending";
+
+          return (
+            <div
+              key={`${resourceType}-${resource.id}`}
+              className="rounded-lg border border-border/70 bg-background/30 px-3 py-3 text-sm"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="font-medium">{label}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {meta || "No extra detail"}
+                  </p>
+                </div>
+                <Badge variant={statusTone(status)}>{status}</Badge>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {status === "approved" ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      onUpdate(vendor, resourceType, resource.id, "pending")
+                    }
+                    disabled={
+                      workingAction ===
+                      `${vendor.id}:resource-${resourceType}-${resource.id}-pending`
+                    }
+                  >
+                    <ShieldAlert className="h-4 w-4" />
+                    Pending
+                  </Button>
+                ) : (
+                  <Button
+                    size="sm"
+                    onClick={() =>
+                      onUpdate(vendor, resourceType, resource.id, "approved")
+                    }
+                    disabled={
+                      workingAction ===
+                      `${vendor.id}:resource-${resourceType}-${resource.id}-approved`
+                    }
+                  >
+                    <ShieldCheck className="h-4 w-4" />
+                    Approve
+                  </Button>
+                )}
+                {status !== "rejected" ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      onUpdate(vendor, resourceType, resource.id, "rejected")
+                    }
+                    disabled={
+                      workingAction ===
+                      `${vendor.id}:resource-${resourceType}-${resource.id}-rejected`
+                    }
+                  >
+                    <ShieldAlert className="h-4 w-4" />
+                    Reject
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+          );
+        })}
+        {!rows.length ? (
+          <p className="text-sm text-muted-foreground">
+            No {title.toLowerCase()} created yet.
+          </p>
+        ) : null}
+      </div>
+    </div>
+  );
 }
 
 function VendorProfileModal({
   vendor,
   detail,
   loading,
+  workingAction,
   onClose,
+  onResourceVerification,
 }: {
-  vendor: VendorRecord
-  detail: VendorDetail | null
-  loading: boolean
-  onClose: () => void
+  vendor: VendorRecord;
+  detail: VendorDetail | null;
+  loading: boolean;
+  workingAction: string | null;
+  onClose: () => void;
+  onResourceVerification: (
+    vendor: VendorRecord,
+    resourceType: ResourceType,
+    resourceId: number,
+    verificationStatus: VendorRecord["verificationStatus"],
+  ) => void;
 }) {
-  const current = detail?.vendor ?? vendor
+  const current = detail?.vendor ?? vendor;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4">
@@ -281,8 +441,8 @@ function VendorProfileModal({
           <div className="min-w-0">
             <p className="text-xl font-semibold">{current.businessName}</p>
             <p className="mt-1 text-sm text-muted-foreground">
-              {current.contactName ?? 'Owner not set'} -{' '}
-              {current.phone ?? 'No phone'} - {locationLabel(current)}
+              {current.contactName ?? "Owner not set"} -{" "}
+              {current.phone ?? "No phone"} - {locationLabel(current)}
             </p>
           </div>
           <Button
@@ -307,8 +467,8 @@ function VendorProfileModal({
                   <div className="rounded-lg border border-border/70 bg-card/60 p-4">
                     <p className="text-sm text-muted-foreground">Account</p>
                     <div className="mt-3 flex flex-wrap gap-2">
-                      <Badge variant={current.isActive ? 'success' : 'danger'}>
-                        {current.isActive ? 'active' : 'inactive'}
+                      <Badge variant={current.isActive ? "success" : "danger"}>
+                        {current.isActive ? "active" : "inactive"}
                       </Badge>
                       <Badge variant={statusTone(current.verificationStatus)}>
                         KYC {current.verificationStatus}
@@ -318,7 +478,7 @@ function VendorProfileModal({
                       </Badge>
                     </div>
                     <div className="mt-4 grid gap-2 text-sm text-muted-foreground">
-                      <p>Email: {current.email ?? 'Not provided'}</p>
+                      <p>Email: {current.email ?? "Not provided"}</p>
                       <p>Last login: {formatDate(current.lastLoginAt)}</p>
                       <p>Last seen: {formatDate(current.lastSeenAt)}</p>
                     </div>
@@ -352,16 +512,16 @@ function VendorProfileModal({
                     <div>
                       <p className="font-semibold">KYC documents</p>
                       <p className="text-sm text-muted-foreground">
-                        {current.kyc.pendingDocuments} pending,{' '}
-                        {current.kyc.approvedDocuments} approved,{' '}
+                        {current.kyc.pendingDocuments} pending,{" "}
+                        {current.kyc.approvedDocuments} approved,{" "}
                         {current.kyc.rejectedDocuments} rejected
                       </p>
                     </div>
                     <Badge
                       variant={
                         current.kyc.manualReviewDocuments > 0
-                          ? 'warning'
-                          : 'secondary'
+                          ? "warning"
+                          : "secondary"
                       }
                     >
                       {current.kyc.manualReviewDocuments} manual review
@@ -389,6 +549,37 @@ function VendorProfileModal({
                         No document records available.
                       </p>
                     ) : null}
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-border/70 bg-card/60 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="font-semibold">Resource verification</p>
+                      <p className="text-sm text-muted-foreground">
+                        Optional for cabs and drivers. Approved resources show
+                        the verified icon to customers and vendors.
+                      </p>
+                    </div>
+                    <Badge variant="outline">Optional</Badge>
+                  </div>
+                  <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                    <ResourceVerificationList
+                      title="Drivers"
+                      rows={detail?.drivers ?? []}
+                      resourceType="drivers"
+                      vendor={current}
+                      workingAction={workingAction}
+                      onUpdate={onResourceVerification}
+                    />
+                    <ResourceVerificationList
+                      title="Cabs"
+                      rows={detail?.cabs ?? []}
+                      resourceType="cabs"
+                      vendor={current}
+                      workingAction={workingAction}
+                      onUpdate={onResourceVerification}
+                    />
                   </div>
                 </div>
 
@@ -467,12 +658,12 @@ function VendorProfileModal({
                           <span>
                             {session.deviceLabel ??
                               session.platform ??
-                              'Device'}
+                              "Device"}
                           </span>
                           <Badge
-                            variant={session.revokedAt ? 'danger' : 'success'}
+                            variant={session.revokedAt ? "danger" : "success"}
                           >
-                            {session.revokedAt ? 'revoked' : 'active'}
+                            {session.revokedAt ? "revoked" : "active"}
                           </Badge>
                         </div>
                         <p className="mt-1 text-muted-foreground">
@@ -515,32 +706,32 @@ function VendorProfileModal({
         </div>
       </div>
     </div>
-  )
+  );
 }
 
 export function VendorManagementPanel({
   overview,
 }: {
-  overview: VendorManagementOverview | null
+  overview: VendorManagementOverview | null;
 }) {
-  const summary = overview?.summary ?? EMPTY_SUMMARY
-  const vendors = overview?.vendors ?? []
-  const [query, setQuery] = useState('')
-  const [filter, setFilter] = useState('all')
+  const summary = overview?.summary ?? EMPTY_SUMMARY;
+  const vendors = overview?.vendors ?? [];
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState("all");
   const [selectedVendor, setSelectedVendor] = useState<VendorRecord | null>(
-    null
-  )
+    null,
+  );
   const [selectedDetail, setSelectedDetail] = useState<VendorDetail | null>(
-    null
-  )
-  const [loadingDetail, setLoadingDetail] = useState(false)
-  const [workingAction, setWorkingAction] = useState<string | null>(null)
+    null,
+  );
+  const [loadingDetail, setLoadingDetail] = useState(false);
+  const [workingAction, setWorkingAction] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(
-    overview ? null : 'Vendor data is unavailable.'
-  )
+    overview ? null : "Vendor data is unavailable.",
+  );
 
   const filteredVendors = useMemo(() => {
-    const normalized = query.trim().toLowerCase()
+    const normalized = query.trim().toLowerCase();
 
     return vendors.filter((vendor) => {
       const matchesSearch =
@@ -554,40 +745,40 @@ export function VendorManagementPanel({
           vendor.state,
         ]
           .filter(Boolean)
-          .some((value) => String(value).toLowerCase().includes(normalized))
+          .some((value) => String(value).toLowerCase().includes(normalized));
 
       const matchesFilter =
-        filter === 'all' ||
-        (filter === 'active' && vendor.isActive) ||
-        (filter === 'inactive' && !vendor.isActive) ||
-        (filter === 'pending_kyc' && vendor.verificationStatus === 'pending') ||
-        (filter === 'approved_kyc' &&
-          vendor.verificationStatus === 'approved') ||
-        (filter === 'premium' && vendor.subscription.status === 'active') ||
-        (filter === 'marketplace_live' &&
+        filter === "all" ||
+        (filter === "active" && vendor.isActive) ||
+        (filter === "inactive" && !vendor.isActive) ||
+        (filter === "pending_kyc" && vendor.verificationStatus === "pending") ||
+        (filter === "approved_kyc" &&
+          vendor.verificationStatus === "approved") ||
+        (filter === "premium" && vendor.subscription.status === "active") ||
+        (filter === "marketplace_live" &&
           vendor.marketplace.isPublic &&
-          vendor.marketplace.profileStatus === 'live')
+          vendor.marketplace.profileStatus === "live");
 
-      return matchesSearch && matchesFilter
-    })
-  }, [filter, query, vendors])
+      return matchesSearch && matchesFilter;
+    });
+  }, [filter, query, vendors]);
 
   async function openProfile(vendor: VendorRecord) {
-    setSelectedVendor(vendor)
-    setSelectedDetail(null)
-    setLoadingDetail(true)
-    setMessage(null)
+    setSelectedVendor(vendor);
+    setSelectedDetail(null);
+    setLoadingDetail(true);
+    setMessage(null);
     try {
-      const detail = await requestJson(`/api/v1/admin/vendors/${vendor.id}`)
-      setSelectedDetail(detail as VendorDetail)
+      const detail = await requestJson(`/api/v1/admin/vendors/${vendor.id}`);
+      setSelectedDetail(detail as VendorDetail);
     } catch (error) {
       setMessage(
         error instanceof Error
           ? error.message
-          : 'Unable to load vendor profile.'
-      )
+          : "Unable to load vendor profile.",
+      );
     } finally {
-      setLoadingDetail(false)
+      setLoadingDetail(false);
     }
   }
 
@@ -595,41 +786,41 @@ export function VendorManagementPanel({
     vendor: VendorRecord,
     key: string,
     path: string,
-    body: Record<string, unknown>
+    body: Record<string, unknown>,
   ) {
-    setWorkingAction(`${vendor.id}:${key}`)
-    setMessage(null)
+    setWorkingAction(`${vendor.id}:${key}`);
+    setMessage(null);
     try {
-      await requestJson(path, body)
-      window.location.reload()
+      await requestJson(path, body);
+      window.location.reload();
     } catch (error) {
       setMessage(
-        error instanceof Error ? error.message : 'Unable to update vendor.'
-      )
+        error instanceof Error ? error.message : "Unable to update vendor.",
+      );
     } finally {
-      setWorkingAction(null)
+      setWorkingAction(null);
     }
   }
 
   function updateActivation(vendor: VendorRecord) {
-    const nextActive = !vendor.isActive
+    const nextActive = !vendor.isActive;
     if (!nextActive && !window.confirm(`Deactivate ${vendor.businessName}?`)) {
-      return
+      return;
     }
 
     return runAction(
       vendor,
-      'activation',
+      "activation",
       `/api/v1/admin/vendors/${vendor.id}/activation`,
       {
         isActive: nextActive,
-      }
-    )
+      },
+    );
   }
 
   function updateKyc(
     vendor: VendorRecord,
-    verificationStatus: VendorRecord['verificationStatus']
+    verificationStatus: VendorRecord["verificationStatus"],
   ) {
     return runAction(
       vendor,
@@ -637,20 +828,70 @@ export function VendorManagementPanel({
       `/api/v1/admin/vendors/${vendor.id}/kyc`,
       {
         verificationStatus,
-      }
-    )
+      },
+    );
+  }
+
+  async function updateResourceVerification(
+    vendor: VendorRecord,
+    resourceType: ResourceType,
+    resourceId: number,
+    verificationStatus: VendorRecord["verificationStatus"],
+  ) {
+    const key = `resource-${resourceType}-${resourceId}-${verificationStatus}`;
+    setWorkingAction(`${vendor.id}:${key}`);
+    setMessage(null);
+    try {
+      const detail = await requestJson(
+        `/api/v1/admin/vendors/${vendor.id}/resources/${resourceType}/${resourceId}/verification`,
+        { verificationStatus },
+      );
+      setSelectedDetail(detail as VendorDetail);
+      setSelectedVendor((detail as VendorDetail).vendor);
+    } catch (error) {
+      setMessage(
+        error instanceof Error ? error.message : "Unable to update resource.",
+      );
+    } finally {
+      setWorkingAction(null);
+    }
   }
 
   function updateMarketplace(vendor: VendorRecord, visible: boolean) {
     return runAction(
       vendor,
-      visible ? 'marketplace-live' : 'marketplace-hide',
+      visible ? "marketplace-live" : "marketplace-hide",
       `/api/v1/admin/vendors/${vendor.id}/marketplace`,
       {
         isPublic: visible,
-        profileStatus: visible ? 'live' : 'hidden',
-      }
-    )
+        profileStatus: visible ? "live" : "hidden",
+      },
+    );
+  }
+
+  async function deleteVendor(vendor: VendorRecord) {
+    const confirmed = window.confirm(
+      `Delete ${vendor.businessName}? This removes the vendor account, sessions, profile, and linked vendor records.`,
+    );
+
+    if (!confirmed) return;
+
+    setWorkingAction(`${vendor.id}:delete`);
+    setMessage(null);
+    try {
+      await requestJson(
+        `/api/v1/admin/vendors/${vendor.id}`,
+        undefined,
+        "DELETE",
+      );
+      window.location.reload();
+    } catch (error) {
+      setMessage(
+        error instanceof Error ? error.message : "Unable to delete vendor.",
+      );
+    } finally {
+      setWorkingAction(null);
+    }
   }
 
   return (
@@ -715,7 +956,7 @@ export function VendorManagementPanel({
           value={summary.pendingKyc}
           note={`${summary.approvedKyc} approved, ${summary.rejectedKyc} rejected`}
           icon={ShieldAlert}
-          tone={summary.pendingKyc > 0 ? 'warning' : 'success'}
+          tone={summary.pendingKyc > 0 ? "warning" : "success"}
         />
         <MetricCard
           label="Active subscriptions"
@@ -793,10 +1034,11 @@ export function VendorManagementPanel({
               </div>
 
               {filteredVendors.map((vendor) => {
-                const activationKey = `${vendor.id}:activation`
+                const activationKey = `${vendor.id}:activation`;
+                const deleteKey = `${vendor.id}:delete`;
                 const marketplaceLive =
                   vendor.marketplace.isPublic &&
-                  vendor.marketplace.profileStatus === 'live'
+                  vendor.marketplace.profileStatus === "live";
 
                 return (
                   <div
@@ -808,8 +1050,8 @@ export function VendorManagementPanel({
                         {vendor.businessName}
                       </p>
                       <p className="mt-1 truncate text-sm text-muted-foreground">
-                        {vendor.contactName ?? 'Owner not set'} -{' '}
-                        {vendor.phone ?? 'No phone'}
+                        {vendor.contactName ?? "Owner not set"} -{" "}
+                        {vendor.phone ?? "No phone"}
                       </p>
                       <p className="mt-1 truncate text-sm text-muted-foreground">
                         {locationLabel(vendor)}
@@ -817,8 +1059,8 @@ export function VendorManagementPanel({
                     </div>
 
                     <div className="flex flex-wrap gap-2 xl:block xl:space-y-2">
-                      <Badge variant={vendor.isActive ? 'success' : 'danger'}>
-                        {vendor.isActive ? 'active' : 'inactive'}
+                      <Badge variant={vendor.isActive ? "success" : "danger"}>
+                        {vendor.isActive ? "active" : "inactive"}
                       </Badge>
                       <p className="text-xs text-muted-foreground">
                         Seen {formatDate(vendor.lastSeenAt)}
@@ -849,7 +1091,7 @@ export function VendorManagementPanel({
                       </Badge>
                       <p className="text-xs text-muted-foreground">
                         {vendor.marketplace.cabListings +
-                          vendor.marketplace.serviceListings}{' '}
+                          vendor.marketplace.serviceListings}{" "}
                         listings
                       </p>
                     </div>
@@ -871,8 +1113,8 @@ export function VendorManagementPanel({
                         disabled={workingAction === activationKey}
                         title={
                           vendor.isActive
-                            ? 'Deactivate vendor'
-                            : 'Activate vendor'
+                            ? "Deactivate vendor"
+                            : "Activate vendor"
                         }
                       >
                         {vendor.isActive ? (
@@ -880,13 +1122,13 @@ export function VendorManagementPanel({
                         ) : (
                           <UserRoundCheck className="h-4 w-4" />
                         )}
-                        {vendor.isActive ? 'Deactivate' : 'Activate'}
+                        {vendor.isActive ? "Deactivate" : "Activate"}
                       </Button>
-                      {vendor.verificationStatus === 'approved' ? (
+                      {vendor.verificationStatus === "approved" ? (
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() => updateKyc(vendor, 'pending')}
+                          onClick={() => updateKyc(vendor, "pending")}
                           disabled={
                             workingAction === `${vendor.id}:kyc-pending`
                           }
@@ -898,7 +1140,7 @@ export function VendorManagementPanel({
                       ) : (
                         <Button
                           size="sm"
-                          onClick={() => updateKyc(vendor, 'approved')}
+                          onClick={() => updateKyc(vendor, "approved")}
                           disabled={
                             workingAction === `${vendor.id}:kyc-approved`
                           }
@@ -908,11 +1150,11 @@ export function VendorManagementPanel({
                           Approve
                         </Button>
                       )}
-                      {vendor.verificationStatus !== 'rejected' ? (
+                      {vendor.verificationStatus !== "rejected" ? (
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() => updateKyc(vendor, 'rejected')}
+                          onClick={() => updateKyc(vendor, "rejected")}
                           disabled={
                             workingAction === `${vendor.id}:kyc-rejected`
                           }
@@ -932,14 +1174,14 @@ export function VendorManagementPanel({
                           workingAction ===
                           `${vendor.id}:${
                             marketplaceLive
-                              ? 'marketplace-hide'
-                              : 'marketplace-live'
+                              ? "marketplace-hide"
+                              : "marketplace-live"
                           }`
                         }
                         title={
                           marketplaceLive
-                            ? 'Hide marketplace profile'
-                            : 'Publish marketplace profile'
+                            ? "Hide marketplace profile"
+                            : "Publish marketplace profile"
                         }
                       >
                         {marketplaceLive ? (
@@ -947,11 +1189,22 @@ export function VendorManagementPanel({
                         ) : (
                           <CheckCircle2 className="h-4 w-4" />
                         )}
-                        {marketplaceLive ? 'Hide' : 'Publish'}
+                        {marketplaceLive ? "Hide" : "Publish"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="border-red-500/40 text-red-600 hover:bg-red-500/10 hover:text-red-700"
+                        onClick={() => deleteVendor(vendor)}
+                        disabled={workingAction === deleteKey}
+                        title="Delete vendor"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                        Delete
                       </Button>
                     </div>
                   </div>
-                )
+                );
               })}
 
               {!filteredVendors.length ? (
@@ -969,12 +1222,14 @@ export function VendorManagementPanel({
           vendor={selectedVendor}
           detail={selectedDetail}
           loading={loadingDetail}
+          workingAction={workingAction}
           onClose={() => {
-            setSelectedVendor(null)
-            setSelectedDetail(null)
+            setSelectedVendor(null);
+            setSelectedDetail(null);
           }}
+          onResourceVerification={updateResourceVerification}
         />
       ) : null}
     </main>
-  )
+  );
 }

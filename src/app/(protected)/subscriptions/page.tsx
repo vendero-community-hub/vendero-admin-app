@@ -120,6 +120,43 @@ function variantForStatus(status: string): 'success' | 'warning' | 'danger' | 's
   return 'secondary'
 }
 
+function configNumber(config: Record<string, unknown> | undefined, key: string, fallback = 0) {
+  const value = Number(config?.[key] ?? fallback)
+  return Number.isFinite(value) ? value : fallback
+}
+
+function configString(config: Record<string, unknown> | undefined, key: string, fallback = '') {
+  const value = config?.[key]
+  return typeof value === 'string' ? value : fallback
+}
+
+function planBillingTerms(plan: Overview['plans'][number]) {
+  const firstPaymentAmount = configNumber(plan.featureConfig, 'firstPaymentAmount', 0)
+  const firstPaymentCycles = configNumber(
+    plan.featureConfig,
+    'firstPaymentCycles',
+    configNumber(plan.featureConfig, 'firstPaymentMonths', 0)
+  )
+  const trialEnabled = plan.featureConfig?.trialEnabled !== false
+  const trialDays = trialEnabled ? configNumber(plan.featureConfig, 'freeTrialDays', 0) : 0
+  const trialPaymentTiming = configString(
+    plan.featureConfig,
+    'trialPaymentTiming',
+    configString(plan.featureConfig, 'trialCheckoutMode', 'before_trial')
+  )
+  const firstPaymentText =
+    firstPaymentAmount > 0 && firstPaymentCycles > 0
+      ? `First payment ₹${firstPaymentAmount} covers ${firstPaymentCycles} ${firstPaymentCycles === 1 ? 'cycle' : 'cycles'}`
+      : 'No introductory first payment configured'
+  const regularText = `Then ₹${plan.priceAmount} ${plan.currency} every ${plan.billingInterval}`
+  const trialText =
+    trialDays > 0
+      ? `${trialDays} day free trial • first payment ${trialPaymentTiming === 'after_trial' ? 'after trial' : 'before trial'} • one use per vendor per plan`
+      : 'Free trial disabled'
+
+  return [firstPaymentText, regularText, trialText]
+}
+
 export default async function SubscriptionsPage() {
   const overview = await getOverview()
   const analytics = overview?.analytics ?? {
@@ -209,9 +246,13 @@ export default async function SubscriptionsPage() {
                 {plan.description ? (
                   <p className="mt-3 text-sm leading-6 text-muted-foreground">{plan.description}</p>
                 ) : null}
-                <p className="mt-2 text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                  Trial {Number(plan.featureConfig?.freeTrialDays ?? 0) > 0 ? `${plan.featureConfig?.freeTrialDays} days` : 'disabled'}
-                </p>
+                <div className="mt-3 grid gap-2 text-xs">
+                  {planBillingTerms(plan).map((term) => (
+                    <p key={term} className="rounded-xl border border-border/60 bg-background/45 px-3 py-2 text-muted-foreground">
+                      {term}
+                    </p>
+                  ))}
+                </div>
                 <div className="mt-4 flex flex-wrap gap-2">
                   {plan.features.map((feature) => (
                     <Badge
