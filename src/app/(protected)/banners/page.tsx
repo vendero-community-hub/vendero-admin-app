@@ -64,7 +64,9 @@ type Banner = {
     spendAmount: number
     ctr: number
   }
+  rejectedReason?: string | null
   createdAt: string | null
+  updatedAt?: string | null
 }
 
 type PricingSettings = {
@@ -154,6 +156,18 @@ const actionTypes: BannerActionType[] = [
 
 const pricingModels: PricingModel[] = ['per_day', 'per_week', 'per_month', 'per_view', 'per_click', 'flat']
 const statuses: BannerStatus[] = ['active', 'pending_review', 'paused', 'draft', 'rejected', 'expired']
+const appScreenTargets = [
+  'marketplace',
+  'crm',
+  'invoice',
+  'chats',
+  'availability',
+  'my_trips',
+  'leads',
+  'subscription',
+  'vendor_search',
+  'white_label',
+]
 
 function unwrapPayload(payload: any) {
   return payload?.data?.data ?? payload?.data ?? payload
@@ -205,6 +219,25 @@ function parseText(value: FormDataEntryValue | null) {
   return text || null
 }
 
+function parseTextLines(value: FormDataEntryValue | null) {
+  return String(value ?? '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+}
+
+function parseFeatureLines(value: FormDataEntryValue | null) {
+  return parseTextLines(value).map((line) => {
+    const [title, ...rest] = line.split(':')
+    const cleanTitle = title.trim()
+    const text = rest.join(':').trim()
+    return {
+      title: cleanTitle,
+      text: text || cleanTitle,
+    }
+  })
+}
+
 function parseJsonObject(value: FormDataEntryValue | null, fallback: Record<string, unknown>) {
   const text = String(value ?? '').trim()
   if (!text) return fallback
@@ -214,6 +247,98 @@ function parseJsonObject(value: FormDataEntryValue | null, fallback: Record<stri
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : fallback
   } catch {
     return fallback
+  }
+}
+
+function normalizeActionTarget(value: string | null) {
+  if (!value) return null
+  const numeric = Number(value)
+  return Number.isFinite(numeric) && String(numeric) === value ? numeric : value
+}
+
+function objectValue(value: unknown) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+}
+
+function buildActionPayload(formData: FormData, actionType: BannerActionType) {
+  const basePayload = parseJsonObject(formData.get('actionPayloadJson'), {})
+  const screenKey = parseText(formData.get('screenKey'))
+  const externalUrl = parseText(formData.get('externalUrl'))
+  const videoUrl = parseText(formData.get('videoUrl'))
+  const actionTarget = normalizeActionTarget(parseText(formData.get('actionTarget')))
+  const actionTitle = parseText(formData.get('actionTitle'))
+
+  if (actionType === 'screen') {
+    return { ...basePayload, screenKey: screenKey ?? basePayload.screenKey ?? 'marketplace' }
+  }
+
+  if (actionType === 'external_url') {
+    return { ...basePayload, url: externalUrl ?? basePayload.url }
+  }
+
+  if (actionType === 'video_screen') {
+    return { ...basePayload, videoUrl: videoUrl ?? basePayload.videoUrl }
+  }
+
+  if (actionType === 'vendor_profile' || actionType === 'direct_chat') {
+    return {
+      ...basePayload,
+      vendorProfileId: actionTarget ?? basePayload.vendorProfileId,
+      vendorName: actionTitle ?? basePayload.vendorName,
+      title: actionTitle ?? basePayload.title,
+    }
+  }
+
+  if (actionType === 'group') {
+    return {
+      ...basePayload,
+      conversationId: actionTarget ?? basePayload.conversationId,
+      conversation: {
+        id: actionTarget ?? objectValue(basePayload.conversation).id,
+        title: actionTitle ?? objectValue(basePayload.conversation).title ?? 'Group',
+      },
+    }
+  }
+
+  if (actionType === 'broadcast') {
+    return {
+      ...basePayload,
+      broadcastListId: actionTarget ?? basePayload.broadcastListId,
+      name: actionTitle ?? basePayload.name ?? 'Broadcast',
+    }
+  }
+
+  return basePayload
+}
+
+function buildDetailPayload(formData: FormData) {
+  const basePayload = parseJsonObject(formData.get('detailPayloadJson'), {})
+  const title = parseText(formData.get('detailTitle'))
+  const body = parseText(formData.get('detailBody'))
+  const features = parseFeatureLines(formData.get('featureList'))
+  const images = parseTextLines(formData.get('detailImageUrls'))
+  const ctaUrl = parseText(formData.get('detailCtaUrl')) ?? parseText(formData.get('externalUrl'))
+  const ctaScreenKey = parseText(formData.get('detailCtaScreenKey'))
+  const ctaLabel = parseText(formData.get('detailCtaLabel')) ?? parseText(formData.get('ctaLabel')) ?? 'Open'
+
+  return {
+    ...basePayload,
+    ...(title ? { title } : {}),
+    ...(body ? { body } : {}),
+    ...(features.length ? { features } : {}),
+    ...(images.length ? { images } : {}),
+    ...(ctaUrl || ctaScreenKey
+      ? {
+          cta: {
+            ...objectValue(basePayload.cta),
+            label: ctaLabel,
+            ...(ctaUrl ? { url: ctaUrl } : {}),
+            ...(ctaScreenKey
+              ? { actionType: 'screen', screenKey: ctaScreenKey, actionPayload: { screenKey: ctaScreenKey } }
+              : {}),
+          },
+        }
+      : {}),
   }
 }
 
@@ -231,6 +356,32 @@ function compactNumber(value: number) {
 
 function label(value: string) {
   return value.replace(/_/g, ' ')
+}
+
+function formValue(value: unknown) {
+  return value === null || value === undefined ? '' : String(value)
+}
+
+function featureListText(banner: Banner) {
+  const features = banner.detailPayload?.features
+  if (!Array.isArray(features)) return ''
+
+  return features
+    .map((feature) => {
+      if (typeof feature === 'string') return feature
+      if (!feature || typeof feature !== 'object') return ''
+      const typedFeature = feature as Record<string, unknown>
+      const title = String(typedFeature.title ?? typedFeature.label ?? '').trim()
+      const text = String(typedFeature.text ?? typedFeature.body ?? typedFeature.description ?? '').trim()
+      return title && text ? `${title}: ${text}` : title || text
+    })
+    .filter(Boolean)
+    .join('\n')
+}
+
+function detailImageText(banner: Banner) {
+  const images = banner.detailPayload?.images
+  return Array.isArray(images) ? images.map((image) => String(image)).join('\n') : ''
 }
 
 function statusVariant(status: BannerStatus): 'default' | 'success' | 'warning' | 'danger' | 'secondary' {
@@ -284,8 +435,8 @@ async function createVenderoBanner(formData: FormData) {
       placement: String(formData.get('placement') ?? 'home').trim() || 'home',
       status: String(formData.get('status') ?? 'active') as BannerStatus,
       actionType,
-      actionPayload: parseJsonObject(formData.get('actionPayloadJson'), {}),
-      detailPayload: parseJsonObject(formData.get('detailPayloadJson'), {}),
+      actionPayload: buildActionPayload(formData, actionType),
+      detailPayload: buildDetailPayload(formData),
       priority: parseNumber(formData.get('priority')),
       bidAmount: parseNumber(formData.get('bidAmount')),
       currency: String(formData.get('currency') ?? 'INR').trim() || 'INR',
@@ -311,13 +462,28 @@ async function updateBannerQuickAction(formData: FormData) {
 
   const id = String(formData.get('id') ?? '').trim()
   if (!id) return
+  const actionType = String(formData.get('actionType') ?? 'detail_screen') as BannerActionType
 
   await adminRequest(`/api/v1/admin/banners/${id}`, {
     method: 'PUT',
     body: JSON.stringify({
+      ownerType: String(formData.get('ownerType') ?? 'vendero') as BannerOwnerType,
+      title: String(formData.get('title') ?? '').trim(),
+      subtitle: parseText(formData.get('subtitle')),
+      body: parseText(formData.get('body')),
+      imageUrl: String(formData.get('imageUrl') ?? '').trim(),
+      videoUrl: parseText(formData.get('videoUrl')),
+      ctaLabel: parseText(formData.get('ctaLabel')) ?? 'Open',
+      placement: String(formData.get('placement') ?? 'home').trim() || 'home',
+      actionType,
+      actionPayload: buildActionPayload(formData, actionType),
+      detailPayload: buildDetailPayload(formData),
       status: String(formData.get('status') ?? 'paused') as BannerStatus,
+      startsAt: parseText(formData.get('startsAt')),
+      endsAt: parseText(formData.get('endsAt')),
       priority: parseNumber(formData.get('priority')),
       bidAmount: parseNumber(formData.get('bidAmount')),
+      currency: String(formData.get('currency') ?? 'INR').trim() || 'INR',
       pricingModel: parseText(formData.get('pricingModel')) as PricingModel | null,
       pricePerDay: parseNumber(formData.get('pricePerDay')),
       pricePerWeek: parseNumber(formData.get('pricePerWeek')),
@@ -331,6 +497,19 @@ async function updateBannerQuickAction(formData: FormData) {
       dailyClickCap: parseOptionalNumber(formData.get('dailyClickCap')),
       rejectedReason: parseText(formData.get('rejectedReason')),
     }),
+  })
+
+  revalidatePath('/banners')
+}
+
+async function deleteBannerAction(formData: FormData) {
+  'use server'
+
+  const id = String(formData.get('id') ?? '').trim()
+  if (!id) return
+
+  await adminRequest(`/api/v1/admin/banners/${id}`, {
+    method: 'DELETE',
   })
 
   revalidatePath('/banners')
@@ -552,6 +731,28 @@ export default async function BannersPage() {
                   </select>
                 </div>
                 <div className="space-y-1.5">
+                  <FieldLabel>Screen target</FieldLabel>
+                  <select name="screenKey" defaultValue="marketplace" className="h-10 w-full rounded-md border border-border bg-background/70 px-3 text-sm">
+                    {appScreenTargets.map((screen) => (
+                      <option key={screen} value={screen}>
+                        {label(screen)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1.5">
+                  <FieldLabel>External URL</FieldLabel>
+                  <Input name="externalUrl" placeholder="https://..." />
+                </div>
+                <div className="space-y-1.5">
+                  <FieldLabel>Action target ID</FieldLabel>
+                  <Input name="actionTarget" placeholder="Vendor, group, or broadcast ID" />
+                </div>
+                <div className="space-y-1.5">
+                  <FieldLabel>Action title</FieldLabel>
+                  <Input name="actionTitle" placeholder="Optional target label" />
+                </div>
+                <div className="space-y-1.5">
                   <FieldLabel>Video URL</FieldLabel>
                   <Input name="videoUrl" placeholder="https://..." />
                 </div>
@@ -626,6 +827,56 @@ export default async function BannersPage() {
                     className="w-full rounded-md border border-border bg-background/70 px-3 py-2 text-sm outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/15"
                     placeholder="Short detail page copy"
                   />
+                </div>
+                <div className="space-y-1.5">
+                  <FieldLabel>Detail title</FieldLabel>
+                  <Input name="detailTitle" placeholder="Detail screen headline" />
+                </div>
+                <div className="space-y-1.5">
+                  <FieldLabel>Detail CTA screen</FieldLabel>
+                  <select name="detailCtaScreenKey" defaultValue="" className="h-10 w-full rounded-md border border-border bg-background/70 px-3 text-sm">
+                    <option value="">No app CTA</option>
+                    {appScreenTargets.map((screen) => (
+                      <option key={screen} value={screen}>
+                        {label(screen)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1.5 sm:col-span-2">
+                  <FieldLabel>Detail body</FieldLabel>
+                  <textarea
+                    name="detailBody"
+                    rows={3}
+                    className="w-full rounded-md border border-border bg-background/70 px-3 py-2 text-sm outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/15"
+                    placeholder="Longer copy for the banner detail screen"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <FieldLabel>Feature list</FieldLabel>
+                  <textarea
+                    name="featureList"
+                    rows={5}
+                    className="min-h-28 w-full rounded-md border border-border bg-background/70 px-3 py-2 text-sm text-foreground outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/15"
+                    placeholder={'Fast matching: Show nearby vendors\nSimple CRM: Track every lead'}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <FieldLabel>Detail image URLs</FieldLabel>
+                  <textarea
+                    name="detailImageUrls"
+                    rows={5}
+                    className="min-h-28 w-full rounded-md border border-border bg-background/70 px-3 py-2 text-sm text-foreground outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/15"
+                    placeholder={'https://...\nhttps://...'}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <FieldLabel>Detail CTA label</FieldLabel>
+                  <Input name="detailCtaLabel" placeholder="Explore" />
+                </div>
+                <div className="space-y-1.5">
+                  <FieldLabel>Detail CTA URL</FieldLabel>
+                  <Input name="detailCtaUrl" placeholder="https://..." />
                 </div>
                 <div className="space-y-1.5">
                   <FieldLabel>Action payload JSON</FieldLabel>
@@ -706,6 +957,84 @@ export default async function BannersPage() {
                   </div>
 
                   <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="space-y-1.5 sm:col-span-2">
+                      <FieldLabel>Title</FieldLabel>
+                      <Input name="title" required defaultValue={banner.title} />
+                    </div>
+                    <div className="space-y-1.5 sm:col-span-2">
+                      <FieldLabel>Subtitle</FieldLabel>
+                      <Input name="subtitle" defaultValue={banner.subtitle ?? ''} />
+                    </div>
+                    <div className="space-y-1.5 sm:col-span-2">
+                      <FieldLabel>Image URL</FieldLabel>
+                      <Input name="imageUrl" required defaultValue={banner.imageUrl} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <FieldLabel>Owner</FieldLabel>
+                      <select name="ownerType" defaultValue={banner.ownerType} className="h-10 w-full rounded-md border border-border bg-background/70 px-3 text-sm">
+                        <option value="vendero">Vendero</option>
+                        <option value="vendor">Vendor</option>
+                      </select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <FieldLabel>Placement</FieldLabel>
+                      <Input name="placement" defaultValue={banner.placement} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <FieldLabel>CTA label</FieldLabel>
+                      <Input name="ctaLabel" defaultValue={banner.ctaLabel ?? 'Open'} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <FieldLabel>Action</FieldLabel>
+                      <select name="actionType" defaultValue={banner.actionType} className="h-10 w-full rounded-md border border-border bg-background/70 px-3 text-sm">
+                        {actionTypes.map((type) => (
+                          <option key={type} value={type}>
+                            {label(type)}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <FieldLabel>Screen target</FieldLabel>
+                      <select name="screenKey" defaultValue={formValue(banner.actionPayload?.screenKey ?? 'marketplace')} className="h-10 w-full rounded-md border border-border bg-background/70 px-3 text-sm">
+                        {appScreenTargets.map((screen) => (
+                          <option key={screen} value={screen}>
+                            {label(screen)}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <FieldLabel>External URL</FieldLabel>
+                      <Input name="externalUrl" defaultValue={formValue(banner.actionPayload?.url)} placeholder="https://..." />
+                    </div>
+                    <div className="space-y-1.5">
+                      <FieldLabel>Action target ID</FieldLabel>
+                      <Input
+                        name="actionTarget"
+                        defaultValue={formValue(
+                          banner.actionPayload?.vendorProfileId ??
+                            banner.actionPayload?.conversationId ??
+                            banner.actionPayload?.broadcastListId
+                        )}
+                        placeholder="Vendor, group, or broadcast ID"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <FieldLabel>Action title</FieldLabel>
+                      <Input
+                        name="actionTitle"
+                        defaultValue={formValue(
+                          banner.actionPayload?.vendorName ??
+                            banner.actionPayload?.title ??
+                            banner.actionPayload?.name
+                        )}
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <FieldLabel>Video URL</FieldLabel>
+                      <Input name="videoUrl" defaultValue={banner.videoUrl ?? formValue(banner.actionPayload?.videoUrl)} />
+                    </div>
                     <div className="space-y-1.5">
                       <FieldLabel>Status</FieldLabel>
                       <select name="status" defaultValue={banner.status} className="h-10 w-full rounded-md border border-border bg-background/70 px-3 text-sm">
@@ -734,6 +1063,18 @@ export default async function BannersPage() {
                     <div className="space-y-1.5">
                       <FieldLabel>Priority</FieldLabel>
                       <Input name="priority" type="number" defaultValue={banner.priority} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <FieldLabel>Currency</FieldLabel>
+                      <Input name="currency" defaultValue={banner.pricing.currency} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <FieldLabel>Starts at</FieldLabel>
+                      <Input name="startsAt" defaultValue={banner.startsAt ?? ''} placeholder="Optional ISO date" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <FieldLabel>Ends at</FieldLabel>
+                      <Input name="endsAt" defaultValue={banner.endsAt ?? ''} placeholder="Optional ISO date" />
                     </div>
                     <div className="space-y-1.5">
                       <FieldLabel>Per view</FieldLabel>
@@ -776,12 +1117,87 @@ export default async function BannersPage() {
                       <Input name="dailyClickCap" type="number" defaultValue={banner.limits.dailyClickCap ?? ''} />
                     </div>
                     <div className="space-y-1.5 sm:col-span-2">
-                      <FieldLabel>Reject reason</FieldLabel>
-                      <Input name="rejectedReason" placeholder="Only needed when rejecting" />
+                      <FieldLabel>Body</FieldLabel>
+                      <textarea
+                        name="body"
+                        rows={3}
+                        defaultValue={banner.body ?? ''}
+                        className="w-full rounded-md border border-border bg-background/70 px-3 py-2 text-sm outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/15"
+                      />
                     </div>
-                    <div className="sm:col-span-2">
+                    <div className="space-y-1.5">
+                      <FieldLabel>Detail title</FieldLabel>
+                      <Input name="detailTitle" defaultValue={formValue(banner.detailPayload?.title)} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <FieldLabel>Detail CTA screen</FieldLabel>
+                      <select name="detailCtaScreenKey" defaultValue={formValue(objectValue(banner.detailPayload?.cta).screenKey)} className="h-10 w-full rounded-md border border-border bg-background/70 px-3 text-sm">
+                        <option value="">No app CTA</option>
+                        {appScreenTargets.map((screen) => (
+                          <option key={screen} value={screen}>
+                            {label(screen)}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="space-y-1.5 sm:col-span-2">
+                      <FieldLabel>Detail body</FieldLabel>
+                      <textarea
+                        name="detailBody"
+                        rows={3}
+                        defaultValue={formValue(banner.detailPayload?.body)}
+                        className="w-full rounded-md border border-border bg-background/70 px-3 py-2 text-sm outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/15"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <FieldLabel>Feature list</FieldLabel>
+                      <textarea
+                        name="featureList"
+                        rows={5}
+                        defaultValue={featureListText(banner)}
+                        className="min-h-28 w-full rounded-md border border-border bg-background/70 px-3 py-2 text-sm text-foreground outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/15"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <FieldLabel>Detail image URLs</FieldLabel>
+                      <textarea
+                        name="detailImageUrls"
+                        rows={5}
+                        defaultValue={detailImageText(banner)}
+                        className="min-h-28 w-full rounded-md border border-border bg-background/70 px-3 py-2 text-sm text-foreground outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/15"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <FieldLabel>Detail CTA label</FieldLabel>
+                      <Input name="detailCtaLabel" defaultValue={formValue(objectValue(banner.detailPayload?.cta).label)} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <FieldLabel>Detail CTA URL</FieldLabel>
+                      <Input name="detailCtaUrl" defaultValue={formValue(objectValue(banner.detailPayload?.cta).url)} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <FieldLabel>Action payload JSON</FieldLabel>
+                      <JsonTextarea name="actionPayloadJson" defaultValue={banner.actionPayload ?? {}} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <FieldLabel>Detail payload JSON</FieldLabel>
+                      <JsonTextarea name="detailPayloadJson" defaultValue={banner.detailPayload ?? {}} />
+                    </div>
+                    <div className="space-y-1.5 sm:col-span-2">
+                      <FieldLabel>Reject reason</FieldLabel>
+                      <Input name="rejectedReason" defaultValue={banner.rejectedReason ?? ''} placeholder="Only needed when rejecting" />
+                    </div>
+                    <div className="flex flex-wrap gap-2 sm:col-span-2">
                       <Button type="submit" variant="outline" className="w-full sm:w-auto">
                         Update banner
+                      </Button>
+                      <Button
+                        type="submit"
+                        formAction={deleteBannerAction}
+                        variant="outline"
+                        className="w-full border-red-200 text-red-700 hover:bg-red-50 sm:w-auto"
+                      >
+                        Delete banner
                       </Button>
                     </div>
                   </div>
