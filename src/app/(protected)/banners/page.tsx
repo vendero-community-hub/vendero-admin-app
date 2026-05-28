@@ -181,13 +181,14 @@ async function getAdminToken() {
 async function adminRequest(path: string, init?: RequestInit) {
   const token = await getAdminToken()
   if (!token) return null
+  const isFormData = typeof FormData !== 'undefined' && init?.body instanceof FormData
 
   const response = await fetch(`${API_URL}${path}`, {
     cache: 'no-store',
     ...init,
     headers: {
       ...ENV_HEADERS,
-      ...(init?.body ? { 'content-type': 'application/json' } : {}),
+      ...(init?.body && !isFormData ? { 'content-type': 'application/json' } : {}),
       authorization: `Bearer ${token}`,
       ...init?.headers,
     },
@@ -217,6 +218,30 @@ function parseOptionalNumber(value: FormDataEntryValue | null) {
 function parseText(value: FormDataEntryValue | null) {
   const text = String(value ?? '').trim()
   return text || null
+}
+
+function getUploadFile(formData: FormData, name: string) {
+  const value = formData.get(name)
+  if (!value || typeof value === 'string') return null
+  if ('size' in value && Number(value.size) > 0) return value as File
+  return null
+}
+
+async function uploadBannerImage(formData: FormData) {
+  const file = getUploadFile(formData, 'bannerFile')
+  if (!file) return null
+
+  const uploadFormData = new FormData()
+  uploadFormData.append('scope', 'banner')
+  uploadFormData.append('file', file)
+
+  const uploaded = await adminRequest('/api/v1/admin/media/upload', {
+    method: 'POST',
+    body: uploadFormData,
+  })
+
+  const url = uploaded?.url ?? uploaded?.fileUrl ?? uploaded?.publicUrl
+  return typeof url === 'string' && url.trim() ? url.trim() : null
 }
 
 function parseTextLines(value: FormDataEntryValue | null) {
@@ -422,6 +447,7 @@ async function createVenderoBanner(formData: FormData) {
   'use server'
 
   const actionType = String(formData.get('actionType') ?? 'detail_screen') as BannerActionType
+  const imageUrl = await uploadBannerImage(formData)
   await adminRequest('/api/v1/admin/banners', {
     method: 'POST',
     body: JSON.stringify({
@@ -429,7 +455,7 @@ async function createVenderoBanner(formData: FormData) {
       title: String(formData.get('title') ?? '').trim(),
       subtitle: parseText(formData.get('subtitle')),
       body: parseText(formData.get('body')),
-      imageUrl: String(formData.get('imageUrl') ?? '').trim(),
+      imageUrl: imageUrl ?? '',
       videoUrl: parseText(formData.get('videoUrl')),
       ctaLabel: parseText(formData.get('ctaLabel')) ?? 'Open',
       placement: String(formData.get('placement') ?? 'home').trim() || 'home',
@@ -463,6 +489,8 @@ async function updateBannerQuickAction(formData: FormData) {
   const id = String(formData.get('id') ?? '').trim()
   if (!id) return
   const actionType = String(formData.get('actionType') ?? 'detail_screen') as BannerActionType
+  const uploadedImageUrl = await uploadBannerImage(formData)
+  const imageUrl = uploadedImageUrl ?? String(formData.get('imageUrl') ?? '').trim()
 
   await adminRequest(`/api/v1/admin/banners/${id}`, {
     method: 'PUT',
@@ -471,7 +499,7 @@ async function updateBannerQuickAction(formData: FormData) {
       title: String(formData.get('title') ?? '').trim(),
       subtitle: parseText(formData.get('subtitle')),
       body: parseText(formData.get('body')),
-      imageUrl: String(formData.get('imageUrl') ?? '').trim(),
+      imageUrl,
       videoUrl: parseText(formData.get('videoUrl')),
       ctaLabel: parseText(formData.get('ctaLabel')) ?? 'Open',
       placement: String(formData.get('placement') ?? 'home').trim() || 'home',
@@ -699,8 +727,11 @@ export default async function BannersPage() {
                   <Input name="subtitle" placeholder="Show vendors what they can do next" />
                 </div>
                 <div className="space-y-1.5 sm:col-span-2">
-                  <FieldLabel>Image URL</FieldLabel>
-                  <Input name="imageUrl" required placeholder="https://..." />
+                  <FieldLabel>Upload banner image</FieldLabel>
+                  <Input name="bannerFile" type="file" accept="image/*" required />
+                  <p className="text-xs text-muted-foreground">
+                    Required size: 1200 x 500 px. The uploaded file URL is saved automatically.
+                  </p>
                 </div>
                 <div className="space-y-1.5">
                   <FieldLabel>CTA</FieldLabel>
@@ -966,8 +997,12 @@ export default async function BannersPage() {
                       <Input name="subtitle" defaultValue={banner.subtitle ?? ''} />
                     </div>
                     <div className="space-y-1.5 sm:col-span-2">
-                      <FieldLabel>Image URL</FieldLabel>
-                      <Input name="imageUrl" required defaultValue={banner.imageUrl} />
+                      <FieldLabel>Replace banner image</FieldLabel>
+                      <input type="hidden" name="imageUrl" value={banner.imageUrl} />
+                      <Input name="bannerFile" type="file" accept="image/*" />
+                      <p className="text-xs text-muted-foreground">
+                        Leave empty to keep current image. Required size: 1200 x 500 px.
+                      </p>
                     </div>
                     <div className="space-y-1.5">
                       <FieldLabel>Owner</FieldLabel>
