@@ -32,6 +32,7 @@ const PAGE_PERMISSION_BY_PATH: Array<{ prefix: string; permission: string }> = [
   { prefix: '/links', permission: 'links' },
   { prefix: '/landing', permission: 'landing' },
   { prefix: '/features', permission: 'features' },
+  { prefix: '/banners', permission: 'banners' },
   { prefix: '/worker-queues', permission: 'worker_queues' },
   { prefix: '/audit-logs', permission: 'audit_logs' },
 ]
@@ -104,6 +105,7 @@ export async function middleware(request: NextRequest) {
         links: '/links',
         landing: '/landing',
         features: '/features',
+        banners: '/banners',
         worker_queues: '/worker-queues',
         audit_logs: '/audit-logs',
       }

@@ -33,6 +33,17 @@ export function ReviewKycButton({
       decision === 'reject'
         ? window.prompt('Rejection reason for this document', 'Document details do not match')
         : ''
+    const profileUpdates =
+      decision === 'approve'
+        ? {
+            fullName: window.prompt('Name as per document (optional)', '') || undefined,
+            businessName: window.prompt('Business name update (optional)', '') || undefined,
+            contactName: window.prompt('Contact name update (optional)', '') || undefined,
+            contactEmail: window.prompt('Email update (optional)', '') || undefined,
+            city: window.prompt('City update (optional)', '') || undefined,
+            state: window.prompt('State update (optional)', '') || undefined,
+          }
+        : undefined
 
     if (decision === 'reject' && !rejectionReason) {
       return
@@ -50,6 +61,7 @@ export function ReviewKycButton({
           decision,
           reviewNotes: reviewNotes || null,
           rejectionReason: rejectionReason || null,
+          profileUpdates,
         }),
       })
 

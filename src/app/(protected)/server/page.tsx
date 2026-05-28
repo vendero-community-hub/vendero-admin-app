@@ -4,6 +4,7 @@ import { Activity, AlertTriangle, ArrowUpRight, CheckCircle2, Cpu, DatabaseZap, 
 import { Badge } from '@/components/ui/badge'
 import type { BadgeProps } from '@/components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { RateLimitToolsPanel } from './rate-limit-tools-panel'
 
 type ServiceHealth = {
   status: 'up' | 'down' | 'configured' | 'planned'
@@ -358,6 +359,8 @@ export default async function ServerPage() {
           )
         })}
       </section>
+
+      <RateLimitToolsPanel />
 
       <section className="grid gap-6 xl:grid-cols-[1.55fr_0.85fr]">
         <div className="space-y-6">

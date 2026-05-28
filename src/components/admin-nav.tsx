@@ -8,6 +8,7 @@ import {
   ClipboardList,
   LayoutDashboard,
   Link2,
+  Megaphone,
   MessageSquareWarning,
   MessagesSquare,
   ShieldCheck,
@@ -53,6 +54,7 @@ export const adminNavGroups: AdminNavGroup[] = [
       { href: '/links', label: 'White Label', icon: Link2 },
       { href: '/landing', label: 'Landing Requests', icon: ClipboardList },
       { href: '/features', label: 'New Features', icon: Sparkles },
+      { href: '/banners', label: 'Banner Ads', icon: Megaphone },
     ],
   },
   {
@@ -80,6 +82,7 @@ export const adminPermissionByHref: Record<string, string> = {
   '/links': 'links',
   '/landing': 'landing',
   '/features': 'features',
+  '/banners': 'banners',
   '/worker-queues': 'worker_queues',
   '/audit-logs': 'audit_logs',
 }
