@@ -23,6 +23,8 @@ const PAGE_PERMISSION_BY_PATH: Array<{ prefix: string; permission: string }> = [
   { prefix: '/staff', permission: 'staff' },
   { prefix: '/verifications', permission: 'verifications' },
   { prefix: '/subscriptions', permission: 'subscriptions' },
+  { prefix: '/referral-program', permission: 'referral_program' },
+  { prefix: '/payment-gateway', permission: 'subscriptions' },
   { prefix: '/trips', permission: 'trips' },
   { prefix: '/fleet', permission: 'fleet' },
   { prefix: '/chat-moderation', permission: 'chat_moderation' },
@@ -33,6 +35,7 @@ const PAGE_PERMISSION_BY_PATH: Array<{ prefix: string; permission: string }> = [
   { prefix: '/landing', permission: 'landing' },
   { prefix: '/features', permission: 'features' },
   { prefix: '/banners', permission: 'banners' },
+  { prefix: '/legal', permission: 'legal_policies' },
   { prefix: '/worker-queues', permission: 'worker_queues' },
   { prefix: '/audit-logs', permission: 'audit_logs' },
 ]
@@ -96,6 +99,7 @@ export async function middleware(request: NextRequest) {
         staff: '/staff',
         verifications: '/verifications',
         subscriptions: '/subscriptions',
+        referral_program: '/referral-program',
         trips: '/trips',
         fleet: '/fleet',
         chat_moderation: '/chat-moderation',
@@ -106,6 +110,7 @@ export async function middleware(request: NextRequest) {
         landing: '/landing',
         features: '/features',
         banners: '/banners',
+        legal_policies: '/legal',
         worker_queues: '/worker-queues',
         audit_logs: '/audit-logs',
       }

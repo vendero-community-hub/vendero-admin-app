@@ -5,7 +5,9 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
 const FEATURE_OPTIONS = [
-  { key: 'trip_sharing', label: 'Trip sharing', aliases: ['trip_access', 'premium_trip_access', 'trip_share_basic'] },
+  { key: 'trip_sharing', label: 'Trip sharing', aliases: ['trip_access', 'trip_share_basic'] },
+  { key: 'premium_trip_access', label: 'Access premium trip', aliases: ['premium_preview_trips', 'premium_only_trips'] },
+  { key: 'vendero_trips', label: 'Vendero trips', aliases: ['vendero_trip_access', 'vendero_cab_trips'] },
   { key: 'availability_posting', label: 'Availability posting', aliases: ['availability_access'] },
   { key: 'chat_messaging', label: 'Chats', aliases: ['chats_access'] },
   { key: 'broadcast_messaging', label: 'Broadcast messaging', aliases: ['broadcast_unlimited'] },
@@ -95,12 +97,31 @@ type Plan = {
   isDefault: boolean
   requiresPaymentVerification: boolean
   featureConfig?: Record<string, unknown>
+  pricingOptions?: Array<{
+    id: string
+    label: string
+    periodType: 'month' | 'day'
+    periodValue: number
+    priceAmount: number
+    currency: string
+    isDefault?: boolean
+    displayOrder?: number
+  }>
   features: Array<{
     id: number
     featureKey: string
     isEnabled: boolean
     limitValue: number | null
   }>
+}
+
+type PricingDraft = {
+  id: string
+  label: string
+  periodType: 'month' | 'day'
+  periodValue: string
+  priceAmount: string
+  isDefault: boolean
 }
 
 export type PaymentGatewaySummary = {
@@ -207,6 +228,133 @@ function buildFeaturePayload(featureState: Record<string, boolean>) {
   }))
 }
 
+function buildTrialFeatureState(plan?: Plan | null) {
+  const config = plan?.featureConfig ?? {}
+  const trialKeys = Array.isArray(config.trialFeatureKeys)
+    ? new Set(config.trialFeatureKeys.map((item) => String(item)))
+    : null
+  const trialConfig =
+    config.trialFeatures && typeof config.trialFeatures === 'object' && !Array.isArray(config.trialFeatures)
+      ? (config.trialFeatures as Record<string, unknown>)
+      : null
+
+  if (!trialKeys && !trialConfig) {
+    return buildFeatureState(plan)
+  }
+
+  return FEATURE_OPTIONS.reduce<Record<string, boolean>>((acc, feature) => {
+    acc[feature.key] =
+      Boolean(trialKeys?.has(feature.key)) ||
+      Boolean(feature.aliases?.some((alias) => trialKeys?.has(alias))) ||
+      trialConfig?.[feature.key] === true ||
+      Boolean(feature.aliases?.some((alias) => trialConfig?.[alias] === true))
+    return acc
+  }, {})
+}
+
+function enabledFeatureKeys(featureState: Record<string, boolean>) {
+  return FEATURE_OPTIONS.filter((feature) => featureState[feature.key]).map((feature) => feature.key)
+}
+
+function slugFromName(name: string) {
+  return (
+    name
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '') || 'subscription_plan'
+  )
+}
+
+function pricingLabel(option: PricingDraft) {
+  const value = Number(option.periodValue || 0)
+  const unit = option.periodType === 'month' ? (value === 1 ? 'month' : 'months') : value === 1 ? 'day' : 'days'
+  return option.label.trim() || `${value || 1} ${unit}`
+}
+
+function defaultPricingDraft(): PricingDraft[] {
+  return [
+    {
+      id: `price-${Date.now()}`,
+      label: '1 month',
+      periodType: 'month',
+      periodValue: '1',
+      priceAmount: '249',
+      isDefault: true,
+    },
+  ]
+}
+
+function pricingDraftsFromPlan(plan?: Plan | null): PricingDraft[] {
+  const configured: Array<Record<string, unknown>> = Array.isArray(plan?.pricingOptions)
+    ? (plan?.pricingOptions as Array<Record<string, unknown>>)
+    : Array.isArray(plan?.featureConfig?.pricingOptions)
+      ? (plan?.featureConfig?.pricingOptions as Array<Record<string, unknown>>)
+      : []
+
+  const rows = configured
+    .map((option, index) => ({
+      id: String(option.id ?? `price-${index + 1}`),
+      label: String(option.label ?? ''),
+      periodType: String(option.periodType ?? 'month') === 'day' ? 'day' : ('month' as 'month' | 'day'),
+      periodValue: String(option.periodValue ?? option.months ?? option.days ?? 1),
+      priceAmount: String(option.priceAmount ?? option.amount ?? option.price ?? plan?.priceAmount ?? 0),
+      isDefault: option.isDefault === true || option.default === true,
+    }))
+    .filter((option) => Number(option.periodValue) > 0 && Number(option.priceAmount) >= 0)
+
+  if (!rows.length && plan) {
+    rows.push({
+      id: 'default',
+      label: plan.durationDays ? `${plan.durationDays} days` : '1 month',
+      periodType: plan.durationDays ? 'day' : 'month',
+      periodValue: String(plan.durationDays ?? 1),
+      priceAmount: String(plan.priceAmount ?? 0),
+      isDefault: true,
+    })
+  }
+
+  if (!rows.length) return defaultPricingDraft()
+  if (!rows.some((option) => option.isDefault)) rows[0].isDefault = true
+  return rows
+}
+
+function pricingOptionsPayload(rows: PricingDraft[]) {
+  const normalized = rows
+    .map((option, index) => ({
+      id: option.id || `price-${index + 1}`,
+      label: pricingLabel(option),
+      periodType: option.periodType,
+      periodValue: Math.max(1, Math.round(Number(option.periodValue || 1))),
+      priceAmount: Math.max(0, Number(option.priceAmount || 0)),
+      isDefault: option.isDefault,
+      displayOrder: index,
+    }))
+    .filter((option) => option.periodValue > 0)
+
+  if (!normalized.some((option) => option.isDefault) && normalized[0]) normalized[0].isDefault = true
+  return normalized
+}
+
+function planPricingFields(rows: PricingDraft[]) {
+  const options = pricingOptionsPayload(rows)
+  const defaultOption = options.find((option) => option.isDefault) ?? options[0]
+  const monthValue = defaultOption?.periodType === 'month' ? defaultOption.periodValue : 0
+  return {
+    billingInterval:
+      monthValue === 1
+        ? 'monthly'
+        : monthValue === 3
+          ? 'quarterly'
+          : monthValue === 12
+            ? 'yearly'
+            : 'custom',
+    durationDays: defaultOption?.periodType === 'day' ? defaultOption.periodValue : null,
+    priceAmount: defaultOption?.priceAmount ?? 0,
+    pricingOptions: options,
+  }
+}
+
 function configNumber(config: Record<string, unknown> | undefined, key: string, fallback = 0) {
   const value = Number(config?.[key] ?? fallback)
   return Number.isFinite(value) ? value : fallback
@@ -228,21 +376,29 @@ function buildBillingFeatureConfig(
     trialEnabled: boolean
     freeTrialDays: string
     trialPaymentTiming: string
+    trialFeatureKeys: string[]
+    upfrontPricingEnabled: boolean
     firstPaymentAmount: string
     firstPaymentCycles: string
+    firstPaymentCollectionMode: string
+    pricingOptions: ReturnType<typeof pricingOptionsPayload>
   }
 ) {
   const trialDays = values.trialEnabled ? Number(values.freeTrialDays || 0) : 0
-  const firstPaymentAmount = Number(values.firstPaymentAmount || 0)
-  const firstPaymentCycles = Number(values.firstPaymentCycles || 0)
+  const firstPaymentAmount = values.upfrontPricingEnabled ? Number(values.firstPaymentAmount || 0) : 0
+  const firstPaymentCycles = values.upfrontPricingEnabled ? Number(values.firstPaymentCycles || 0) : 0
 
   return {
     ...(existingConfig ?? {}),
     freeTrialDays: Number.isFinite(trialDays) ? trialDays : 0,
     trialEnabled: values.trialEnabled,
     trialPaymentTiming: values.trialPaymentTiming,
+    trialFeatureKeys: values.trialEnabled ? values.trialFeatureKeys : [],
+    upfrontPricingEnabled: values.upfrontPricingEnabled,
     firstPaymentAmount: Number.isFinite(firstPaymentAmount) ? firstPaymentAmount : 0,
     firstPaymentCycles: Number.isFinite(firstPaymentCycles) ? firstPaymentCycles : 0,
+    firstPaymentCollectionMode: values.firstPaymentCollectionMode,
+    pricingOptions: values.pricingOptions,
   }
 }
 
@@ -252,22 +408,26 @@ function BillingPolicyFields({
   trialPaymentTiming,
   firstPaymentAmount,
   firstPaymentCycles,
+  firstPaymentCollectionMode,
   onTrialEnabledChange,
   onFreeTrialDaysChange,
   onTrialPaymentTimingChange,
   onFirstPaymentAmountChange,
   onFirstPaymentCyclesChange,
+  onFirstPaymentCollectionModeChange,
 }: {
   trialEnabled: boolean
   freeTrialDays: string
   trialPaymentTiming: string
   firstPaymentAmount: string
   firstPaymentCycles: string
+  firstPaymentCollectionMode: string
   onTrialEnabledChange: (value: boolean) => void
   onFreeTrialDaysChange: (value: string) => void
   onTrialPaymentTimingChange: (value: string) => void
   onFirstPaymentAmountChange: (value: string) => void
   onFirstPaymentCyclesChange: (value: string) => void
+  onFirstPaymentCollectionModeChange: (value: string) => void
 }) {
   return (
     <div className="mt-4 rounded-2xl border border-border/70 bg-background/35 p-4">
@@ -312,7 +472,7 @@ function BillingPolicyFields({
           </select>
         </label>
         <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">First payment amount</span>
+          <span className="text-muted-foreground">Upfront amount per month / cycle</span>
           <Input
             value={firstPaymentAmount}
             onChange={(event) => onFirstPaymentAmountChange(event.target.value)}
@@ -331,9 +491,20 @@ function BillingPolicyFields({
             min="0"
           />
         </label>
+        <label className="space-y-1 text-sm md:col-span-2">
+          <span className="text-muted-foreground">Collection mode</span>
+          <select
+            value={firstPaymentCollectionMode}
+            onChange={(event) => onFirstPaymentCollectionModeChange(event.target.value)}
+            className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+          >
+            <option value="upfront_total">Take all offer months upfront</option>
+            <option value="per_cycle">Take one offer month at a time</option>
+          </select>
+        </label>
       </div>
       <p className="mt-3 text-xs leading-5 text-muted-foreground">
-        After free trial means the mobile app starts trial access without opening Razorpay. When the trial expires, access is stopped and the vendor renews from the subscription card.
+        Example: monthly ₹249 with upfront amount ₹50 for 3 months charges ₹150 upfront when “all offer months” is selected.
       </p>
     </div>
   )
@@ -371,35 +542,344 @@ function FeatureSelector({
   )
 }
 
+const PLAN_STEPS = ['Subscription Detail', 'Features', 'Plan Pricing'] as const
+
+function StepTabs({ step, onStepChange }: { step: number; onStepChange: (step: number) => void }) {
+  return (
+    <div className="mb-5 grid gap-2 md:grid-cols-3">
+      {PLAN_STEPS.map((label, index) => (
+        <button
+          key={label}
+          type="button"
+          onClick={() => onStepChange(index)}
+          className={`rounded-xl border px-3 py-3 text-left text-sm font-semibold ${
+            step === index
+              ? 'border-primary bg-primary/10 text-primary'
+              : 'border-border/70 bg-background/40 text-muted-foreground'
+          }`}
+        >
+          <span className="mr-2 inline-flex h-6 w-6 items-center justify-center rounded-full bg-background text-xs">
+            {index + 1}
+          </span>
+          {label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function DetailStep({
+  name,
+  description,
+  trialEnabled,
+  freeTrialDays,
+  isActive,
+  isPublic,
+  isDefault,
+  requiresPaymentVerification,
+  onNameChange,
+  onDescriptionChange,
+  onTrialEnabledChange,
+  onFreeTrialDaysChange,
+  onIsActiveChange,
+  onIsPublicChange,
+  onIsDefaultChange,
+  onRequiresPaymentVerificationChange,
+  showActive,
+}: {
+  name: string
+  description: string
+  trialEnabled: boolean
+  freeTrialDays: string
+  isActive?: boolean
+  isPublic: boolean
+  isDefault: boolean
+  requiresPaymentVerification: boolean
+  onNameChange: (value: string) => void
+  onDescriptionChange: (value: string) => void
+  onTrialEnabledChange: (value: boolean) => void
+  onFreeTrialDaysChange: (value: string) => void
+  onIsActiveChange?: (value: boolean) => void
+  onIsPublicChange: (value: boolean) => void
+  onIsDefaultChange: (value: boolean) => void
+  onRequiresPaymentVerificationChange: (value: boolean) => void
+  showActive?: boolean
+}) {
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-3 md:grid-cols-2">
+        <label className="space-y-1 text-sm">
+          <span className="text-muted-foreground">Plan name</span>
+          <Input value={name} onChange={(event) => onNameChange(event.target.value)} placeholder="Premium Plus" />
+        </label>
+        <label className="space-y-1 text-sm">
+          <span className="text-muted-foreground">Free trial days</span>
+          <Input
+            value={freeTrialDays}
+            onChange={(event) => onFreeTrialDaysChange(event.target.value)}
+            type="number"
+            min="0"
+            disabled={!trialEnabled}
+          />
+        </label>
+      </div>
+      <label className="space-y-1 text-sm">
+        <span className="text-muted-foreground">Description</span>
+        <textarea
+          value={description}
+          onChange={(event) => onDescriptionChange(event.target.value)}
+          className="min-h-28 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+          placeholder="Describe who this plan is for."
+        />
+      </label>
+      <div className="grid gap-3 md:grid-cols-2">
+        <label className="flex items-center justify-between gap-3 rounded-xl border border-border/70 bg-background/40 px-4 py-3 text-sm font-medium">
+          <span>Free trial</span>
+          <input
+            type="checkbox"
+            checked={trialEnabled}
+            onChange={(event) => onTrialEnabledChange(event.target.checked)}
+          />
+        </label>
+        {showActive ? (
+          <label className="flex items-center justify-between gap-3 rounded-xl border border-border/70 bg-background/40 px-4 py-3 text-sm font-medium">
+            <span>Active</span>
+            <input
+              type="checkbox"
+              checked={Boolean(isActive)}
+              onChange={(event) => onIsActiveChange?.(event.target.checked)}
+            />
+          </label>
+        ) : null}
+        <label className="flex items-center justify-between gap-3 rounded-xl border border-border/70 bg-background/40 px-4 py-3 text-sm font-medium">
+          <span>Public</span>
+          <input type="checkbox" checked={isPublic} onChange={(event) => onIsPublicChange(event.target.checked)} />
+        </label>
+        <label className="flex items-center justify-between gap-3 rounded-xl border border-border/70 bg-background/40 px-4 py-3 text-sm font-medium">
+          <span>Default plan</span>
+          <input type="checkbox" checked={isDefault} onChange={(event) => onIsDefaultChange(event.target.checked)} />
+        </label>
+        <label className="flex items-center justify-between gap-3 rounded-xl border border-border/70 bg-background/40 px-4 py-3 text-sm font-medium md:col-span-2">
+          <span>Requires payment verification</span>
+          <input
+            type="checkbox"
+            checked={requiresPaymentVerification}
+            onChange={(event) => onRequiresPaymentVerificationChange(event.target.checked)}
+          />
+        </label>
+      </div>
+    </div>
+  )
+}
+
+function FeatureWizardStep({
+  trialEnabled,
+  activeTab,
+  onActiveTabChange,
+  trialFeatureState,
+  planFeatureState,
+  onTrialFeatureChange,
+  onPlanFeatureChange,
+}: {
+  trialEnabled: boolean
+  activeTab: 'trial' | 'plan'
+  onActiveTabChange: (tab: 'trial' | 'plan') => void
+  trialFeatureState: Record<string, boolean>
+  planFeatureState: Record<string, boolean>
+  onTrialFeatureChange: (key: string, checked: boolean) => void
+  onPlanFeatureChange: (key: string, checked: boolean) => void
+}) {
+  const currentState = trialEnabled && activeTab === 'trial' ? trialFeatureState : planFeatureState
+  const currentChange = trialEnabled && activeTab === 'trial' ? onTrialFeatureChange : onPlanFeatureChange
+
+  return (
+    <div>
+      {trialEnabled ? (
+        <div className="mb-4 inline-flex rounded-xl border border-border/70 bg-background/40 p-1 text-sm">
+          <button
+            type="button"
+            onClick={() => onActiveTabChange('trial')}
+            className={`rounded-lg px-4 py-2 font-semibold ${activeTab === 'trial' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'}`}
+          >
+            Free trial features
+          </button>
+          <button
+            type="button"
+            onClick={() => onActiveTabChange('plan')}
+            className={`rounded-lg px-4 py-2 font-semibold ${activeTab === 'plan' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'}`}
+          >
+            Active subscription features
+          </button>
+        </div>
+      ) : null}
+      <FeatureSelector featureState={currentState} onChange={currentChange} />
+    </div>
+  )
+}
+
+function PricingManagementStep({
+  upfrontPricingEnabled,
+  firstPaymentAmount,
+  firstPaymentCycles,
+  firstPaymentCollectionMode,
+  pricingRows,
+  onUpfrontPricingEnabledChange,
+  onFirstPaymentAmountChange,
+  onFirstPaymentCyclesChange,
+  onFirstPaymentCollectionModeChange,
+  onPricingRowsChange,
+}: {
+  upfrontPricingEnabled: boolean
+  firstPaymentAmount: string
+  firstPaymentCycles: string
+  firstPaymentCollectionMode: string
+  pricingRows: PricingDraft[]
+  onUpfrontPricingEnabledChange: (value: boolean) => void
+  onFirstPaymentAmountChange: (value: string) => void
+  onFirstPaymentCyclesChange: (value: string) => void
+  onFirstPaymentCollectionModeChange: (value: string) => void
+  onPricingRowsChange: (rows: PricingDraft[]) => void
+}) {
+  function updateRow(index: number, patch: Partial<PricingDraft>) {
+    onPricingRowsChange(pricingRows.map((row, rowIndex) => (rowIndex === index ? { ...row, ...patch } : row)))
+  }
+
+  function makeDefault(index: number) {
+    onPricingRowsChange(pricingRows.map((row, rowIndex) => ({ ...row, isDefault: rowIndex === index })))
+  }
+
+  function addPrice() {
+    onPricingRowsChange([
+      ...pricingRows,
+      {
+        id: `price-${Date.now()}`,
+        label: '',
+        periodType: 'month',
+        periodValue: '1',
+        priceAmount: '0',
+        isDefault: pricingRows.length === 0,
+      },
+    ])
+  }
+
+  function removePrice(index: number) {
+    const nextRows = pricingRows.filter((_row, rowIndex) => rowIndex !== index)
+    if (nextRows.length && !nextRows.some((row) => row.isDefault)) nextRows[0].isDefault = true
+    onPricingRowsChange(nextRows.length ? nextRows : defaultPricingDraft())
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-2xl border border-border/70 bg-background/35 p-4">
+        <label className="flex items-center justify-between gap-3 text-sm font-semibold">
+          <span>Upfront pricing</span>
+          <input
+            type="checkbox"
+            checked={upfrontPricingEnabled}
+            onChange={(event) => onUpfrontPricingEnabledChange(event.target.checked)}
+          />
+        </label>
+        {upfrontPricingEnabled ? (
+          <div className="mt-4 grid gap-3 md:grid-cols-3">
+            <label className="space-y-1 text-sm">
+              <span className="text-muted-foreground">Upfront amount</span>
+              <Input value={firstPaymentAmount} onChange={(event) => onFirstPaymentAmountChange(event.target.value)} type="number" min="0" />
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="text-muted-foreground">Months/cycles covered</span>
+              <Input value={firstPaymentCycles} onChange={(event) => onFirstPaymentCyclesChange(event.target.value)} type="number" min="0" />
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="text-muted-foreground">Collection mode</span>
+              <select
+                value={firstPaymentCollectionMode}
+                onChange={(event) => onFirstPaymentCollectionModeChange(event.target.value)}
+                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+              >
+                <option value="upfront_total">Take all upfront</option>
+                <option value="per_cycle">Take one month/cycle at a time</option>
+              </select>
+            </label>
+          </div>
+        ) : null}
+      </div>
+
+      <div className="rounded-2xl border border-border/70 bg-background/35 p-4">
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm font-semibold">Plan prices</p>
+          <Button type="button" variant="outline" onClick={addPrice}>
+            Add price
+          </Button>
+        </div>
+        <div className="mt-4 space-y-3">
+          {pricingRows.map((row, index) => (
+            <div key={row.id} className="grid gap-3 rounded-xl border border-border/70 bg-background/40 p-3 md:grid-cols-[1fr_150px_150px_150px_auto]">
+              <Input value={row.label} onChange={(event) => updateRow(index, { label: event.target.value })} placeholder="Label e.g. 3 months" />
+              <select
+                value={row.periodType}
+                onChange={(event) => updateRow(index, { periodType: event.target.value === 'day' ? 'day' : 'month' })}
+                className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+              >
+                <option value="month">Month wise</option>
+                <option value="day">Day wise</option>
+              </select>
+              <Input
+                value={row.periodValue}
+                onChange={(event) => updateRow(index, { periodValue: event.target.value })}
+                type="number"
+                min="1"
+                placeholder={row.periodType === 'month' ? 'Months' : 'Days'}
+              />
+              <Input value={row.priceAmount} onChange={(event) => updateRow(index, { priceAmount: event.target.value })} type="number" min="0" placeholder="Price" />
+              <div className="flex items-center gap-2">
+                <label className="flex items-center gap-1 text-xs font-semibold text-muted-foreground">
+                  <input type="radio" checked={row.isDefault} onChange={() => makeDefault(index)} />
+                  Default
+                </label>
+                <Button type="button" variant="outline" onClick={() => removePrice(index)}>
+                  Remove
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export function CreatePlanButton() {
   const [open, setOpen] = useState(false)
   const [working, setWorking] = useState(false)
-  const [code, setCode] = useState('premium_plus')
+  const [step, setStep] = useState(0)
   const [name, setName] = useState('Premium Plus')
   const [description, setDescription] = useState('Premium plan with advanced vendor tools.')
-  const [priceAmount, setPriceAmount] = useState('2499')
-  const [durationDays, setDurationDays] = useState('30')
-  const [billingInterval, setBillingInterval] = useState('monthly')
   const [trialEnabled, setTrialEnabled] = useState(true)
   const [freeTrialDays, setFreeTrialDays] = useState('7')
   const [trialPaymentTiming, setTrialPaymentTiming] = useState('before_trial')
+  const [featureTab, setFeatureTab] = useState<'trial' | 'plan'>('trial')
+  const [upfrontPricingEnabled, setUpfrontPricingEnabled] = useState(false)
   const [firstPaymentAmount, setFirstPaymentAmount] = useState('49')
   const [firstPaymentCycles, setFirstPaymentCycles] = useState('1')
+  const [firstPaymentCollectionMode, setFirstPaymentCollectionMode] = useState('upfront_total')
   const [isPublic, setIsPublic] = useState(true)
   const [isDefault, setIsDefault] = useState(false)
   const [requiresPaymentVerification, setRequiresPaymentVerification] = useState(true)
   const [featureState, setFeatureState] = useState<Record<string, boolean>>(() => buildFeatureState())
+  const [trialFeatureState, setTrialFeatureState] = useState<Record<string, boolean>>(() => buildFeatureState())
+  const [pricingRows, setPricingRows] = useState<PricingDraft[]>(() => defaultPricingDraft())
 
   async function createPlan() {
+    const pricingFields = planPricingFields(pricingRows)
     setWorking(true)
     try {
       await requestJson('/api/v1/admin/subscriptions/plans', {
-        code,
+        code: `${slugFromName(name)}_${Date.now().toString().slice(-5)}`,
         name,
         description,
-        billingInterval,
-        priceAmount: Number(priceAmount || 0),
-        durationDays: Number(durationDays || 30),
+        billingInterval: pricingFields.billingInterval,
+        priceAmount: pricingFields.priceAmount,
+        durationDays: pricingFields.durationDays,
         isPublic,
         isDefault,
         requiresPaymentVerification,
@@ -407,8 +887,12 @@ export function CreatePlanButton() {
           trialEnabled,
           freeTrialDays,
           trialPaymentTiming,
+          trialFeatureKeys: enabledFeatureKeys(trialFeatureState),
+          upfrontPricingEnabled,
           firstPaymentAmount,
           firstPaymentCycles,
+          firstPaymentCollectionMode,
+          pricingOptions: pricingFields.pricingOptions,
         }),
         features: buildFeaturePayload(featureState),
       })
@@ -423,83 +907,69 @@ export function CreatePlanButton() {
       <Button onClick={() => setOpen(true)}>Create plan</Button>
       <ModalShell
         title="Create subscription plan"
-        description="Add plan details, free trial days, and feature access."
+        description="Create details, feature access, and pricing options in three steps."
         open={open}
         onClose={() => setOpen(false)}
       >
-        <div className="grid gap-3 md:grid-cols-2">
-          <Input value={code} onChange={(event) => setCode(event.target.value)} placeholder="Plan code" />
-          <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Plan name" />
-          <Input
-            value={priceAmount}
-            onChange={(event) => setPriceAmount(event.target.value)}
-            placeholder="Price in INR"
-            type="number"
+        <StepTabs step={step} onStepChange={setStep} />
+        {step === 0 ? (
+          <DetailStep
+            name={name}
+            description={description}
+            trialEnabled={trialEnabled}
+            freeTrialDays={freeTrialDays}
+            isPublic={isPublic}
+            isDefault={isDefault}
+            requiresPaymentVerification={requiresPaymentVerification}
+            onNameChange={setName}
+            onDescriptionChange={setDescription}
+            onTrialEnabledChange={setTrialEnabled}
+            onFreeTrialDaysChange={setFreeTrialDays}
+            onIsPublicChange={setIsPublic}
+            onIsDefaultChange={setIsDefault}
+            onRequiresPaymentVerificationChange={setRequiresPaymentVerification}
           />
-          <Input
-            value={durationDays}
-            onChange={(event) => setDurationDays(event.target.value)}
-            placeholder="Duration days"
-            type="number"
+        ) : step === 1 ? (
+          <FeatureWizardStep
+            trialEnabled={trialEnabled}
+            activeTab={featureTab}
+            onActiveTabChange={setFeatureTab}
+            trialFeatureState={trialFeatureState}
+            planFeatureState={featureState}
+            onTrialFeatureChange={(key, checked) =>
+              setTrialFeatureState((current) => ({ ...current, [key]: checked }))
+            }
+            onPlanFeatureChange={(key, checked) =>
+              setFeatureState((current) => ({ ...current, [key]: checked }))
+            }
           />
-          <select
-            value={billingInterval}
-            onChange={(event) => setBillingInterval(event.target.value)}
-            className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-          >
-            <option value="monthly">Monthly</option>
-            <option value="quarterly">Quarterly</option>
-            <option value="yearly">Yearly</option>
-            <option value="lifetime">Lifetime</option>
-            <option value="custom">Custom</option>
-          </select>
-        </div>
-        <BillingPolicyFields
-          trialEnabled={trialEnabled}
-          freeTrialDays={freeTrialDays}
-          trialPaymentTiming={trialPaymentTiming}
-          firstPaymentAmount={firstPaymentAmount}
-          firstPaymentCycles={firstPaymentCycles}
-          onTrialEnabledChange={setTrialEnabled}
-          onFreeTrialDaysChange={setFreeTrialDays}
-          onTrialPaymentTimingChange={setTrialPaymentTiming}
-          onFirstPaymentAmountChange={setFirstPaymentAmount}
-          onFirstPaymentCyclesChange={setFirstPaymentCycles}
-        />
-        <textarea
-          value={description}
-          onChange={(event) => setDescription(event.target.value)}
-          className="mt-3 min-h-24 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-          placeholder="Plan description"
-        />
-        <div className="mt-3 flex flex-wrap gap-4 text-sm">
-          <label className="flex items-center gap-2">
-            <input type="checkbox" checked={isPublic} onChange={(event) => setIsPublic(event.target.checked)} />
-            Public
-          </label>
-          <label className="flex items-center gap-2">
-            <input type="checkbox" checked={isDefault} onChange={(event) => setIsDefault(event.target.checked)} />
-            Default plan
-          </label>
-          <label className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={requiresPaymentVerification}
-              onChange={(event) => setRequiresPaymentVerification(event.target.checked)}
-            />
-            Requires payment verification
-          </label>
-        </div>
-        <div className="mt-4">
-          <FeatureSelector
-            featureState={featureState}
-            onChange={(key, checked) => setFeatureState((current) => ({ ...current, [key]: checked }))}
+        ) : (
+          <PricingManagementStep
+            upfrontPricingEnabled={upfrontPricingEnabled}
+            firstPaymentAmount={firstPaymentAmount}
+            firstPaymentCycles={firstPaymentCycles}
+            firstPaymentCollectionMode={firstPaymentCollectionMode}
+            pricingRows={pricingRows}
+            onUpfrontPricingEnabledChange={setUpfrontPricingEnabled}
+            onFirstPaymentAmountChange={setFirstPaymentAmount}
+            onFirstPaymentCyclesChange={setFirstPaymentCycles}
+            onFirstPaymentCollectionModeChange={setFirstPaymentCollectionMode}
+            onPricingRowsChange={setPricingRows}
           />
-        </div>
-        <div className="mt-5">
-          <Button onClick={createPlan} disabled={working}>
-            {working ? 'Creating...' : 'Create plan'}
+        )}
+        <div className="mt-6 flex items-center justify-between gap-3 border-t border-border pt-4">
+          <Button type="button" variant="outline" onClick={() => setStep((current) => Math.max(current - 1, 0))} disabled={step === 0 || working}>
+            Back
           </Button>
+          {step < 2 ? (
+            <Button type="button" onClick={() => setStep((current) => Math.min(current + 1, 2))}>
+              Next
+            </Button>
+          ) : (
+            <Button onClick={createPlan} disabled={working}>
+              {working ? 'Creating...' : 'Create plan'}
+            </Button>
+          )}
         </div>
       </ModalShell>
     </>
@@ -509,10 +979,9 @@ export function CreatePlanButton() {
 export function UpdatePlanButton({ plan }: { plan: Plan }) {
   const [working, setWorking] = useState(false)
   const [open, setOpen] = useState(false)
+  const [step, setStep] = useState(0)
   const [name, setName] = useState(plan.name)
   const [description, setDescription] = useState(plan.description ?? '')
-  const [priceAmount, setPriceAmount] = useState(String(plan.priceAmount))
-  const [durationDays, setDurationDays] = useState(String(plan.durationDays ?? 30))
   const [trialEnabled, setTrialEnabled] = useState(
     configBoolean(plan.featureConfig, 'trialEnabled', configNumber(plan.featureConfig, 'freeTrialDays', 7) > 0)
   )
@@ -524,6 +993,14 @@ export function UpdatePlanButton({ plan }: { plan: Plan }) {
       plan.featureConfig,
       'trialPaymentTiming',
       configString(plan.featureConfig, 'trialCheckoutMode', 'before_trial')
+    )
+  )
+  const [featureTab, setFeatureTab] = useState<'trial' | 'plan'>('trial')
+  const [upfrontPricingEnabled, setUpfrontPricingEnabled] = useState(
+    configBoolean(
+      plan.featureConfig,
+      'upfrontPricingEnabled',
+      configNumber(plan.featureConfig, 'firstPaymentAmount', 0) > 0
     )
   )
   const [firstPaymentAmount, setFirstPaymentAmount] = useState(
@@ -538,13 +1015,19 @@ export function UpdatePlanButton({ plan }: { plan: Plan }) {
       )
     )
   )
+  const [firstPaymentCollectionMode, setFirstPaymentCollectionMode] = useState(
+    configString(plan.featureConfig, 'firstPaymentCollectionMode', 'upfront_total')
+  )
   const [isActive, setIsActive] = useState(plan.isActive)
   const [isPublic, setIsPublic] = useState(plan.isPublic)
   const [isDefault, setIsDefault] = useState(plan.isDefault)
   const [requiresPaymentVerification, setRequiresPaymentVerification] = useState(plan.requiresPaymentVerification)
   const [featureState, setFeatureState] = useState<Record<string, boolean>>(() => buildFeatureState(plan))
+  const [trialFeatureState, setTrialFeatureState] = useState<Record<string, boolean>>(() => buildTrialFeatureState(plan))
+  const [pricingRows, setPricingRows] = useState<PricingDraft[]>(() => pricingDraftsFromPlan(plan))
 
   async function updatePlan() {
+    const pricingFields = planPricingFields(pricingRows)
     setWorking(true)
     try {
       await requestJson(
@@ -552,8 +1035,9 @@ export function UpdatePlanButton({ plan }: { plan: Plan }) {
         {
           name,
           description,
-          priceAmount: Number(priceAmount || 0),
-          durationDays: Number(durationDays || 30),
+          billingInterval: pricingFields.billingInterval,
+          priceAmount: pricingFields.priceAmount,
+          durationDays: pricingFields.durationDays,
           isActive,
           isPublic,
           isDefault,
@@ -562,8 +1046,12 @@ export function UpdatePlanButton({ plan }: { plan: Plan }) {
             trialEnabled,
             freeTrialDays,
             trialPaymentTiming,
+            trialFeatureKeys: enabledFeatureKeys(trialFeatureState),
+            upfrontPricingEnabled,
             firstPaymentAmount,
             firstPaymentCycles,
+            firstPaymentCollectionMode,
+            pricingOptions: pricingFields.pricingOptions,
           }),
           features: buildFeaturePayload(featureState),
         },
@@ -603,62 +1091,68 @@ export function UpdatePlanButton({ plan }: { plan: Plan }) {
         open={open}
         onClose={() => setOpen(false)}
       >
-        <div className="rounded-xl bg-background/40">
-          <div className="grid gap-3 md:grid-cols-2">
-            <Input value={name} onChange={(event) => setName(event.target.value)} />
-            <Input value={priceAmount} onChange={(event) => setPriceAmount(event.target.value)} type="number" />
-            <Input value={durationDays} onChange={(event) => setDurationDays(event.target.value)} type="number" />
-          </div>
-          <BillingPolicyFields
+        <StepTabs step={step} onStepChange={setStep} />
+        {step === 0 ? (
+          <DetailStep
+            name={name}
+            description={description}
             trialEnabled={trialEnabled}
             freeTrialDays={freeTrialDays}
-            trialPaymentTiming={trialPaymentTiming}
-            firstPaymentAmount={firstPaymentAmount}
-            firstPaymentCycles={firstPaymentCycles}
+            isActive={isActive}
+            isPublic={isPublic}
+            isDefault={isDefault}
+            requiresPaymentVerification={requiresPaymentVerification}
+            onNameChange={setName}
+            onDescriptionChange={setDescription}
             onTrialEnabledChange={setTrialEnabled}
             onFreeTrialDaysChange={setFreeTrialDays}
-            onTrialPaymentTimingChange={setTrialPaymentTiming}
+            onIsActiveChange={setIsActive}
+            onIsPublicChange={setIsPublic}
+            onIsDefaultChange={setIsDefault}
+            onRequiresPaymentVerificationChange={setRequiresPaymentVerification}
+            showActive
+          />
+        ) : step === 1 ? (
+          <FeatureWizardStep
+            trialEnabled={trialEnabled}
+            activeTab={featureTab}
+            onActiveTabChange={setFeatureTab}
+            trialFeatureState={trialFeatureState}
+            planFeatureState={featureState}
+            onTrialFeatureChange={(key, checked) =>
+              setTrialFeatureState((current) => ({ ...current, [key]: checked }))
+            }
+            onPlanFeatureChange={(key, checked) =>
+              setFeatureState((current) => ({ ...current, [key]: checked }))
+            }
+          />
+        ) : (
+          <PricingManagementStep
+            upfrontPricingEnabled={upfrontPricingEnabled}
+            firstPaymentAmount={firstPaymentAmount}
+            firstPaymentCycles={firstPaymentCycles}
+            firstPaymentCollectionMode={firstPaymentCollectionMode}
+            pricingRows={pricingRows}
+            onUpfrontPricingEnabledChange={setUpfrontPricingEnabled}
             onFirstPaymentAmountChange={setFirstPaymentAmount}
             onFirstPaymentCyclesChange={setFirstPaymentCycles}
+            onFirstPaymentCollectionModeChange={setFirstPaymentCollectionMode}
+            onPricingRowsChange={setPricingRows}
           />
-          <textarea
-            value={description}
-            onChange={(event) => setDescription(event.target.value)}
-            className="mt-3 min-h-20 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-          />
-          <div className="mt-3 flex flex-wrap gap-4 text-sm">
-            <label className="flex items-center gap-2">
-              <input type="checkbox" checked={isActive} onChange={(event) => setIsActive(event.target.checked)} />
-              Active
-            </label>
-            <label className="flex items-center gap-2">
-              <input type="checkbox" checked={isPublic} onChange={(event) => setIsPublic(event.target.checked)} />
-              Public
-            </label>
-            <label className="flex items-center gap-2">
-              <input type="checkbox" checked={isDefault} onChange={(event) => setIsDefault(event.target.checked)} />
-              Default
-            </label>
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={requiresPaymentVerification}
-                onChange={(event) => setRequiresPaymentVerification(event.target.checked)}
-              />
-              Requires payment verification
-            </label>
-          </div>
-          <div className="mt-4">
-            <FeatureSelector
-              featureState={featureState}
-              onChange={(key, checked) => setFeatureState((current) => ({ ...current, [key]: checked }))}
-            />
-          </div>
-          <div className="mt-4">
+        )}
+        <div className="mt-6 flex items-center justify-between gap-3 border-t border-border pt-4">
+          <Button type="button" variant="outline" onClick={() => setStep((current) => Math.max(current - 1, 0))} disabled={step === 0 || working}>
+            Back
+          </Button>
+          {step < 2 ? (
+            <Button type="button" onClick={() => setStep((current) => Math.min(current + 1, 2))}>
+              Next
+            </Button>
+          ) : (
             <Button onClick={updatePlan} disabled={working}>
               {working ? 'Saving...' : 'Save changes'}
             </Button>
-          </div>
+          )}
         </div>
       </ModalShell>
     </>
@@ -1233,7 +1727,6 @@ export function SubscriptionQuickActions({ plans }: { plans: Plan[] }) {
   return (
     <div className="flex flex-col gap-3">
       <AssignPlanButton plans={uniquePlans} />
-      <CreatePaymentButton plans={uniquePlans} />
       <RunMaintenanceButton />
     </div>
   )

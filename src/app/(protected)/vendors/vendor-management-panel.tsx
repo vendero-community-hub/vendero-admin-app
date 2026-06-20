@@ -51,6 +51,7 @@ export type VendorRecord = {
   verificationStatus: "pending" | "approved" | "rejected";
   isVerified: boolean;
   onboardingCompleted: boolean;
+  registrationStatus: "draft" | "completed";
   createdAt: string | null;
   updatedAt: string | null;
   subscription: {
@@ -91,6 +92,7 @@ export type VendorManagementOverview = {
     total: number;
     active: number;
     inactive: number;
+    registrationDrafts: number;
     pendingKyc: number;
     approvedKyc: number;
     rejectedKyc: number;
@@ -109,6 +111,7 @@ type VendorDetail = {
   documents: Array<{
     id: number;
     documentType: string;
+    fileUrl: string | null;
     status: string;
     providerName: string | null;
     providerStatus: string;
@@ -171,6 +174,7 @@ const EMPTY_SUMMARY: VendorManagementOverview["summary"] = {
   total: 0,
   active: 0,
   inactive: 0,
+  registrationDrafts: 0,
   pendingKyc: 0,
   approvedKyc: 0,
   rejectedKyc: 0,
@@ -470,6 +474,9 @@ function VendorProfileModal({
                       <Badge variant={current.isActive ? "success" : "danger"}>
                         {current.isActive ? "active" : "inactive"}
                       </Badge>
+                      {!current.onboardingCompleted ? (
+                        <Badge variant="warning">registration draft</Badge>
+                      ) : null}
                       <Badge variant={statusTone(current.verificationStatus)}>
                         KYC {current.verificationStatus}
                       </Badge>
@@ -535,6 +542,16 @@ function VendorProfileModal({
                       >
                         <span>{document.documentType}</span>
                         <div className="flex flex-wrap gap-2">
+                          {document.fileUrl ? (
+                            <a
+                              className="text-primary underline-offset-4 hover:underline"
+                              href={document.fileUrl}
+                              rel="noreferrer"
+                              target="_blank"
+                            >
+                              Open file
+                            </a>
+                          ) : null}
                           <Badge variant={statusTone(document.status)}>
                             {document.status}
                           </Badge>
@@ -751,6 +768,7 @@ export function VendorManagementPanel({
         filter === "all" ||
         (filter === "active" && vendor.isActive) ||
         (filter === "inactive" && !vendor.isActive) ||
+        (filter === "registration_drafts" && !vendor.onboardingCompleted) ||
         (filter === "pending_kyc" && vendor.verificationStatus === "pending") ||
         (filter === "approved_kyc" &&
           vendor.verificationStatus === "approved") ||
@@ -943,13 +961,20 @@ export function VendorManagementPanel({
         </Card>
       </section>
 
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
         <MetricCard
           label="Total vendors"
           value={summary.total}
           note={`${summary.active} active accounts`}
           icon={Building2}
           tone="default"
+        />
+        <MetricCard
+          label="Registration drafts"
+          value={summary.registrationDrafts}
+          note="OTP verified but onboarding not finished"
+          icon={UserRoundCheck}
+          tone={summary.registrationDrafts > 0 ? "warning" : "success"}
         />
         <MetricCard
           label="Pending KYC"
@@ -1009,6 +1034,7 @@ export function VendorManagementPanel({
                 <option value="all">All vendors</option>
                 <option value="active">Active accounts</option>
                 <option value="inactive">Inactive accounts</option>
+                <option value="registration_drafts">Registration drafts</option>
                 <option value="pending_kyc">Pending KYC</option>
                 <option value="approved_kyc">Approved KYC</option>
                 <option value="premium">Active subscription</option>
@@ -1059,6 +1085,9 @@ export function VendorManagementPanel({
                     </div>
 
                     <div className="flex flex-wrap gap-2 xl:block xl:space-y-2">
+                      {!vendor.onboardingCompleted ? (
+                        <Badge variant="warning">registration draft</Badge>
+                      ) : null}
                       <Badge variant={vendor.isActive ? "success" : "danger"}>
                         {vendor.isActive ? "active" : "inactive"}
                       </Badge>

@@ -45,6 +45,15 @@ type KycOverview = {
   }>
 }
 
+const EMPTY_SUMMARY: KycOverview['summary'] = {
+  total: 0,
+  pending: 0,
+  approved: 0,
+  rejected: 0,
+  manualReview: 0,
+  providerQueued: 0,
+}
+
 async function getOverview() {
   const cookieStore = await cookies()
   const token = cookieStore.get('vendero_admin_access_token')?.value
@@ -78,6 +87,8 @@ function statusVariant(status: string): 'success' | 'warning' | 'danger' | 'seco
 
 export default async function AdminVerificationsPage() {
   const overview = await getOverview()
+  const summary = overview?.summary ?? EMPTY_SUMMARY
+  const documents = overview?.documents ?? []
 
   return (
     <main className="space-y-6">
@@ -103,19 +114,19 @@ export default async function AdminVerificationsPage() {
           <CardContent className="grid grid-cols-2 gap-3 text-sm">
             <div className="rounded-xl border border-border/70 bg-background/30 p-3">
               <p className="text-muted-foreground">Pending</p>
-              <p className="mt-1 text-2xl font-semibold">{overview?.summary.pending ?? 0}</p>
+              <p className="mt-1 text-2xl font-semibold">{summary.pending}</p>
             </div>
             <div className="rounded-xl border border-border/70 bg-background/30 p-3">
               <p className="text-muted-foreground">Manual review</p>
-              <p className="mt-1 text-2xl font-semibold">{overview?.summary.manualReview ?? 0}</p>
+              <p className="mt-1 text-2xl font-semibold">{summary.manualReview}</p>
             </div>
             <div className="rounded-xl border border-border/70 bg-background/30 p-3">
               <p className="text-muted-foreground">Provider queued</p>
-              <p className="mt-1 text-2xl font-semibold">{overview?.summary.providerQueued ?? 0}</p>
+              <p className="mt-1 text-2xl font-semibold">{summary.providerQueued}</p>
             </div>
             <div className="rounded-xl border border-border/70 bg-background/30 p-3">
               <p className="text-muted-foreground">Rejected</p>
-              <p className="mt-1 text-2xl font-semibold">{overview?.summary.rejected ?? 0}</p>
+              <p className="mt-1 text-2xl font-semibold">{summary.rejected}</p>
             </div>
           </CardContent>
         </Card>
@@ -131,7 +142,7 @@ export default async function AdminVerificationsPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            {overview?.documents.map((document) => (
+            {documents.map((document) => (
               <div
                 key={document.id}
                 className="grid gap-4 rounded-2xl border border-border/70 bg-background/30 p-4 xl:grid-cols-[1.1fr_0.9fr]"
@@ -209,7 +220,7 @@ export default async function AdminVerificationsPage() {
               </div>
             ))}
 
-            {!overview?.documents.length ? (
+            {!documents.length ? (
               <p className="text-sm text-muted-foreground">
                 No KYC document records are available yet.
               </p>

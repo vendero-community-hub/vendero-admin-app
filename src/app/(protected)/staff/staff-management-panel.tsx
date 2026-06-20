@@ -44,6 +44,7 @@ const DEFAULT_PERMISSION_OPTIONS: PermissionDefinition[] = [
   { key: 'server', label: 'Server', description: 'View server and queue telemetry.' },
   { key: 'links', label: 'White Label', description: 'Audit public white-label links.' },
   { key: 'landing', label: 'Landing Requests', description: 'Review public landing page requests.' },
+  { key: 'legal_policies', label: 'Legal Content', description: 'Manage central privacy, terms, and content policy text.' },
   { key: 'worker_queues', label: 'Worker Queues', description: 'Inspect queues, dead letters, and retries.' },
   { key: 'audit_logs', label: 'Audit Logs', description: 'Browse platform audit events.' },
 ]

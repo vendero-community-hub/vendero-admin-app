@@ -34,6 +34,7 @@ async function getOverview() {
       total: 0,
       active: 0,
       inactive: 0,
+      registrationDrafts: 0,
       pendingKyc: 0,
       approvedKyc: 0,
       rejectedKyc: 0,
