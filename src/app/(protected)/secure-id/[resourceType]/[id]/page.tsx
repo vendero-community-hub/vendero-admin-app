@@ -79,15 +79,15 @@ async function getDetail(resourceType: string, id: string) {
 }
 
 async function resolveParams(
-  params: Promise<{ resourceType: string; id: string }> | { resourceType: string; id: string },
+  params: Promise<{ resourceType: string; id: string }>,
 ) {
-  return Promise.resolve(params);
+  return params;
 }
 
 export default async function SecureIdDetailPage({
   params,
 }: {
-  params: Promise<{ resourceType: string; id: string }> | { resourceType: string; id: string };
+  params: Promise<{ resourceType: string; id: string }>;
 }) {
   const resolvedParams = await resolveParams(params);
   const detail = await getDetail(resolvedParams.resourceType, resolvedParams.id);
