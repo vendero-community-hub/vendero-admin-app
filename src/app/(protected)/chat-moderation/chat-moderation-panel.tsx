@@ -14,6 +14,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { useActionModal } from '@/components/ui/action-modal'
 
 type BadgeTone = 'default' | 'secondary' | 'outline' | 'success' | 'warning' | 'danger'
 
@@ -216,6 +217,7 @@ export function ChatModerationPanel({ initialData }: { initialData: ChatModerati
   const [blockForm, setBlockForm] = useState({ vendorProfileId: '', durationHours: '24', reason: '' })
   const [working, setWorking] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const actionModal = useActionModal()
 
   const analytics = data?.analytics ?? {
     pendingReports: 0,
@@ -264,7 +266,14 @@ export function ChatModerationPanel({ initialData }: { initialData: ChatModerati
   }
 
   async function updateReportStatus(reportId: number, status: 'reviewed' | 'dismissed') {
-    const moderatorNotes = window.prompt(`${status === 'reviewed' ? 'Review' : 'Dismiss'} note`) ?? ''
+    const moderatorNotes = await actionModal.prompt({
+      title: status === 'reviewed' ? 'Mark report reviewed?' : 'Dismiss report?',
+      label: `${status === 'reviewed' ? 'Review' : 'Dismiss'} note`,
+      defaultValue: '',
+      confirmLabel: status === 'reviewed' ? 'Mark reviewed' : 'Dismiss',
+      textarea: true,
+    })
+    if (moderatorNotes === null) return
     setWorking(`report-${reportId}`)
     setError(null)
 
@@ -283,7 +292,15 @@ export function ChatModerationPanel({ initialData }: { initialData: ChatModerati
   }
 
   async function revokeBroadcast(dispatchId: number) {
-    const reason = window.prompt('Revoke reason')
+    const reason = await actionModal.prompt({
+      title: 'Revoke broadcast?',
+      description: 'Provide the internal reason for revoking this broadcast.',
+      label: 'Revoke reason',
+      required: true,
+      confirmLabel: 'Revoke broadcast',
+      variant: 'danger',
+      textarea: true,
+    })
     if (!reason?.trim()) return
     setWorking(`broadcast-${dispatchId}`)
     setError(null)
@@ -307,7 +324,15 @@ export function ChatModerationPanel({ initialData }: { initialData: ChatModerati
     const reason =
       defaultReason ||
       blockForm.reason.trim() ||
-      window.prompt('Block reason')?.trim() ||
+      (await actionModal.prompt({
+        title: 'Block vendor chat?',
+        description: `Block this vendor chat for ${durationHours} hour(s).`,
+        label: 'Block reason',
+        required: true,
+        confirmLabel: 'Block vendor',
+        variant: 'danger',
+        textarea: true,
+      }))?.trim() ||
       ''
     if (!reason) return
 
@@ -344,6 +369,7 @@ export function ChatModerationPanel({ initialData }: { initialData: ChatModerati
   }
 
   return (
+    <>
     <section className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
       <Card className="border-border/70 bg-card/80">
         <CardHeader className="gap-4">
@@ -770,6 +796,7 @@ export function ChatModerationPanel({ initialData }: { initialData: ChatModerati
         </Card>
       </div>
     </section>
+    {actionModal.modal}
+    </>
   )
 }
-

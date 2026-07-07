@@ -17,6 +17,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { useActionModal } from '@/components/ui/action-modal'
 
 type BadgeTone = 'default' | 'secondary' | 'outline' | 'success' | 'warning' | 'danger'
 
@@ -256,6 +257,7 @@ export function MarketplaceModerationPanel({ initialData }: { initialData: Marke
   const [abuseStatus, setAbuseStatus] = useState(initialData?.filters.abuseStatus ?? 'all')
   const [working, setWorking] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const actionModal = useActionModal()
 
   const analytics = data?.analytics ?? {
     pendingListings: 0,
@@ -322,7 +324,14 @@ export function MarketplaceModerationPanel({ initialData }: { initialData: Marke
         : moderationStatusNext === 'rejected'
           ? 'Rejection reason'
           : 'Pending review note'
-    const notes = window.prompt(promptLabel, moderationStatusNext === 'approved' ? '' : listing.moderationNotes ?? '')
+    const notes = await actionModal.prompt({
+      title: 'Moderate listing',
+      label: promptLabel,
+      defaultValue: moderationStatusNext === 'approved' ? '' : listing.moderationNotes ?? '',
+      confirmLabel: 'Save moderation',
+      textarea: true,
+      variant: moderationStatusNext === 'rejected' ? 'danger' : 'default',
+    })
     if (notes === null) return
 
     setWorking(`listing-${listing.type}-${listing.id}`)
@@ -346,10 +355,14 @@ export function MarketplaceModerationPanel({ initialData }: { initialData: Marke
   }
 
   async function moderateReview(review: MarketplaceReview, moderationStatusNext: 'pending' | 'approved' | 'rejected') {
-    const notes = window.prompt(
-      moderationStatusNext === 'approved' ? 'Approval notes (optional)' : 'Review moderation notes',
-      moderationStatusNext === 'approved' ? '' : review.moderationNotes ?? ''
-    )
+    const notes = await actionModal.prompt({
+      title: 'Moderate review',
+      label: moderationStatusNext === 'approved' ? 'Approval notes (optional)' : 'Review moderation notes',
+      defaultValue: moderationStatusNext === 'approved' ? '' : review.moderationNotes ?? '',
+      confirmLabel: 'Save moderation',
+      textarea: true,
+      variant: moderationStatusNext === 'rejected' ? 'danger' : 'default',
+    })
     if (notes === null) return
 
     setWorking(`review-${review.id}`)
@@ -373,13 +386,40 @@ export function MarketplaceModerationPanel({ initialData }: { initialData: Marke
   }
 
   async function reviewLeadAbuse(lead: MarketplaceLead, abuseStatusNext: 'clear' | 'flagged' | 'blocked' | 'dismissed') {
-    const reason =
-      abuseStatusNext === 'clear'
-        ? null
-        : window.prompt('Abuse reason', lead.abuseReason ?? abuseStatusNext)
-    if (reason === null && abuseStatusNext !== 'clear') return
-    const notes = window.prompt('Moderator notes (optional)', lead.abuseNotes ?? '')
-    if (notes === null) return
+    const result = await actionModal.form({
+      title: abuseStatusNext === 'clear' ? 'Clear lead abuse status?' : 'Review lead abuse status',
+      description: `Set this lead to ${abuseStatusNext}.`,
+      confirmLabel: 'Save review',
+      variant: abuseStatusNext === 'blocked' ? 'danger' : 'default',
+      fields:
+        abuseStatusNext === 'clear'
+          ? [
+              {
+                name: 'notes',
+                label: 'Moderator notes (optional)',
+                defaultValue: lead.abuseNotes ?? '',
+                type: 'textarea',
+              },
+            ]
+          : [
+              {
+                name: 'reason',
+                label: 'Abuse reason',
+                defaultValue: lead.abuseReason ?? abuseStatusNext,
+                required: true,
+                type: 'textarea',
+              },
+              {
+                name: 'notes',
+                label: 'Moderator notes (optional)',
+                defaultValue: lead.abuseNotes ?? '',
+                type: 'textarea',
+              },
+            ],
+    })
+    if (!result.confirmed) return
+    const reason = abuseStatusNext === 'clear' ? null : result.values.reason
+    const notes = result.values.notes ?? ''
 
     setWorking(`lead-${lead.id}`)
     setError(null)
@@ -400,6 +440,7 @@ export function MarketplaceModerationPanel({ initialData }: { initialData: Marke
   }
 
   return (
+    <>
     <section className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
       <Card className="border-border/70 bg-card/80">
         <CardHeader className="gap-4">
@@ -844,5 +885,7 @@ export function MarketplaceModerationPanel({ initialData }: { initialData: Marke
         </CardContent>
       </Card>
     </section>
+    {actionModal.modal}
+    </>
   )
 }

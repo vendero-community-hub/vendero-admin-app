@@ -18,6 +18,11 @@ const apiDefaults = {
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  experimental: {
+    serverActions: {
+      bodySizeLimit: process.env.NEXT_SERVER_ACTION_BODY_SIZE_LIMIT ?? '16mb',
+    },
+  },
   async rewrites() {
     const apiBaseUrl = process.env.API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? apiDefaults[appEnv]
 

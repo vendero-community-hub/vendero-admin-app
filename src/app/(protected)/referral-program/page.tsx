@@ -34,6 +34,7 @@ export default async function ReferralProgramPage() {
     closedReferrals: 0,
     paidRewardAmount: 0,
     payableRewardAmount: 0,
+    qualifiedReferrals: 0,
     rewardingReferrals: 0,
     totalDiscountAmount: 0,
     totalReferrals: 0,
@@ -74,8 +75,10 @@ export default async function ReferralProgramPage() {
               </p>
             </div>
             <div className="rounded-xl border border-border/70 bg-background/30 p-3">
-              <p className="text-muted-foreground">Referrals</p>
-              <p className="mt-1 text-2xl font-semibold">{analytics.totalReferrals}</p>
+              <p className="text-muted-foreground">Qualified referrals</p>
+              <p className="mt-1 text-2xl font-semibold">
+                {analytics.qualifiedReferrals ?? analytics.rewardingReferrals ?? 0}
+              </p>
             </div>
             <div className="rounded-xl border border-border/70 bg-background/30 p-3">
               <p className="text-muted-foreground">Paid</p>

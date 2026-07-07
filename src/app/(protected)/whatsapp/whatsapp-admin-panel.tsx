@@ -32,6 +32,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { useActionModal } from "@/components/ui/action-modal";
 import { APP_ENV, socketIoEndpoint } from "@/lib/environment";
 
 type BadgeTone =
@@ -358,6 +359,7 @@ export function WhatsappAdminPanel({
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
   const [working, setWorking] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const actionModal = useActionModal();
   const typingSignalRef = useRef({ conversationId: 0, sentAt: 0 });
 
   const activeRecords = useMemo(() => {
@@ -595,7 +597,15 @@ export function WhatsappAdminPanel({
   ) {
     const rejectionReason =
       status === "rejected"
-        ? window.prompt("Rejection reason", template.rejectionReason ?? "")
+        ? await actionModal.prompt({
+            title: "Reject WhatsApp template?",
+            label: "Rejection reason",
+            defaultValue: template.rejectionReason ?? "",
+            required: true,
+            confirmLabel: "Reject template",
+            variant: "danger",
+            textarea: true,
+          })
         : null;
     if (status === "rejected" && rejectionReason === null) return;
     setWorking(`template-${template.id}`);
@@ -1446,6 +1456,7 @@ export function WhatsappAdminPanel({
   }
 
   return (
+    <>
     <section className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
       <Card className="border-border/70 bg-card/80">
         <CardHeader className="gap-4">
@@ -2058,5 +2069,7 @@ export function WhatsappAdminPanel({
         </CardContent>
       </Card>
     </section>
+    {actionModal.modal}
+    </>
   );
 }

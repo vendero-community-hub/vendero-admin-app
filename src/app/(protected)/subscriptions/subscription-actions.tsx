@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { useActionModal } from '@/components/ui/action-modal'
 
 const FEATURE_OPTIONS = [
   { key: 'trip_sharing', label: 'Trip sharing', aliases: ['trip_access', 'trip_share_basic'] },
@@ -1025,6 +1026,7 @@ export function UpdatePlanButton({ plan }: { plan: Plan }) {
   const [featureState, setFeatureState] = useState<Record<string, boolean>>(() => buildFeatureState(plan))
   const [trialFeatureState, setTrialFeatureState] = useState<Record<string, boolean>>(() => buildTrialFeatureState(plan))
   const [pricingRows, setPricingRows] = useState<PricingDraft[]>(() => pricingDraftsFromPlan(plan))
+  const actionModal = useActionModal()
 
   async function updatePlan() {
     const pricingFields = planPricingFields(pricingRows)
@@ -1064,7 +1066,12 @@ export function UpdatePlanButton({ plan }: { plan: Plan }) {
   }
 
   async function deletePlan() {
-    const confirmed = window.confirm('Delete this subscription plan?')
+    const confirmed = await actionModal.confirm({
+      title: 'Delete subscription plan?',
+      description: `Delete ${plan.name}? Existing payments stay in history, but the plan will no longer be available.`,
+      confirmLabel: 'Delete plan',
+      variant: 'danger',
+    })
     if (!confirmed) return
     setWorking(true)
     try {
@@ -1155,6 +1162,7 @@ export function UpdatePlanButton({ plan }: { plan: Plan }) {
           )}
         </div>
       </ModalShell>
+      {actionModal.modal}
     </>
   )
 }
@@ -1276,18 +1284,41 @@ export function CreatePaymentButton({ plans }: { plans: Plan[] }) {
 export function VerifyPaymentButton({
   paymentId,
   decision,
+  label,
+  verifyTitle,
+  verifyDescription,
+  verifyConfirmLabel,
+  defaultNotes,
 }: {
   paymentId: number
   decision: 'verify' | 'reject'
+  label?: string
+  verifyTitle?: string
+  verifyDescription?: string
+  verifyConfirmLabel?: string
+  defaultNotes?: string
 }) {
   const [working, setWorking] = useState(false)
+  const actionModal = useActionModal()
 
   async function verify() {
-    const notes =
-      window.prompt(
-        decision === 'verify' ? 'Verification notes' : 'Rejection reason',
-        decision === 'verify' ? 'Payment confirmed' : 'Payment proof mismatch'
-      ) ?? ''
+    const notes = await actionModal.prompt({
+      title:
+        decision === 'verify'
+          ? (verifyTitle ?? 'Verify payment and activate subscription?')
+          : 'Reject payment?',
+      description:
+        decision === 'verify'
+          ? (verifyDescription ??
+            'This will mark the order verified and create or refresh an active subscription for this vendor, even if the Razorpay order is still marked created.')
+          : 'This will reject the payment and block subscription access for this membership.',
+      label: decision === 'verify' ? 'Verification notes' : 'Rejection reason',
+      defaultValue: decision === 'verify' ? (defaultNotes ?? 'Payment confirmed') : 'Payment proof mismatch',
+      confirmLabel: decision === 'verify' ? (verifyConfirmLabel ?? 'Verify and activate') : 'Reject payment',
+      variant: decision === 'verify' ? 'default' : 'danger',
+      textarea: true,
+    })
+    if (notes === null) return
 
     setWorking(true)
     try {
@@ -1302,14 +1333,17 @@ export function VerifyPaymentButton({
   }
 
   return (
-    <Button
-      onClick={verify}
-      size="sm"
-      variant={decision === 'verify' ? 'default' : 'outline'}
-      disabled={working}
-    >
-      {working ? 'Saving...' : decision === 'verify' ? 'Verify' : 'Reject'}
-    </Button>
+    <>
+      <Button
+        onClick={verify}
+        size="sm"
+        variant={decision === 'verify' ? 'default' : 'outline'}
+        disabled={working}
+      >
+        {working ? 'Saving...' : (label ?? (decision === 'verify' ? 'Verify' : 'Reject'))}
+      </Button>
+      {actionModal.modal}
+    </>
   )
 }
 
@@ -1354,6 +1388,7 @@ export function PaymentGatewaySettingsButton({
   const [otpCooldownSeconds, setOtpCooldownSeconds] = useState(0)
   const [keysRevealed, setKeysRevealed] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
+  const actionModal = useActionModal()
 
   const effectiveSummary = secureSummary ?? summary
   const otpCooldownActive = otpCooldownSeconds > 0
@@ -1513,9 +1548,12 @@ export function PaymentGatewaySettingsButton({
 
   async function deleteConfig() {
     if (!requireOtpReady('delete_gateway_keys')) return
-    const confirmed = window.confirm(
-      `Delete Razorpay ${mode === 'live' ? 'Production' : 'Test'} keys?`
-    )
+    const confirmed = await actionModal.confirm({
+      title: `Delete Razorpay ${mode === 'live' ? 'Production' : 'Test'} keys?`,
+      description: 'Checkout will stop using this key set after deletion.',
+      confirmLabel: 'Delete keys',
+      variant: 'danger',
+    })
     if (!confirmed) return
 
     setWorking(true)
@@ -1717,6 +1755,7 @@ export function PaymentGatewaySettingsButton({
           </div>
         </div>
       </ModalShell>
+      {actionModal.modal}
     </>
   )
 }

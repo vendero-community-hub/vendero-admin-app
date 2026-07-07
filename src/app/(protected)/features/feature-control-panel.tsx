@@ -1,11 +1,12 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { Pencil, RefreshCw, Trash2 } from 'lucide-react'
+import { Image as ImageIcon, Pencil, PlayCircle, RefreshCw, Trash2 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { useActionModal } from '@/components/ui/action-modal'
 
 type BadgeTone = 'default' | 'secondary' | 'outline' | 'success' | 'warning' | 'danger'
 type FeatureStatus = 'available' | 'coming_soon'
@@ -23,6 +24,14 @@ type FeatureStats = {
   contacted: number
 }
 
+type FeatureMetadata = {
+  tagline?: string | null
+  imageUrls?: string[]
+  videoUrl?: string | null
+  youtubeUrl?: string | null
+  [key: string]: unknown
+}
+
 type FeatureCard = {
   id: number
   publicId: string
@@ -34,6 +43,7 @@ type FeatureCard = {
   isPublished: boolean
   allowWaitlist: boolean
   allowEarlyAccess: boolean
+  metadata: FeatureMetadata | null
   stats: FeatureStats
   createdAt: string | null
   updatedAt: string | null
@@ -91,6 +101,10 @@ type FeatureForm = {
   isPublished: boolean
   allowWaitlist: boolean
   allowEarlyAccess: boolean
+  detailTagline: string
+  imageUrls: string
+  videoUrl: string
+  youtubeUrl: string
 }
 
 const emptyFeatureForm: FeatureForm = {
@@ -102,6 +116,10 @@ const emptyFeatureForm: FeatureForm = {
   isPublished: true,
   allowWaitlist: true,
   allowEarlyAccess: true,
+  detailTagline: '',
+  imageUrls: '',
+  videoUrl: '',
+  youtubeUrl: '',
 }
 
 const interestStatuses: InterestStatus[] = ['new', 'in_review', 'approved', 'rejected', 'contacted']
@@ -158,6 +176,40 @@ function toneForStatus(status: string): BadgeTone {
   return 'secondary'
 }
 
+function textFromMetadata(value: unknown) {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function parseUrlLines(value: string) {
+  return value
+    .split(/\n|,/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
+function normalizeMediaList(value: unknown) {
+  if (Array.isArray(value)) {
+    return value.map((item) => textFromMetadata(item)).filter(Boolean)
+  }
+
+  if (typeof value === 'string') {
+    return parseUrlLines(value)
+  }
+
+  return []
+}
+
+function getFeatureMedia(feature: Pick<FeatureCard, 'metadata'> | null | undefined) {
+  const metadata = feature?.metadata ?? {}
+
+  return {
+    tagline: textFromMetadata(metadata.tagline ?? metadata.detailTagline ?? metadata.subtitle),
+    imageUrls: normalizeMediaList(metadata.imageUrls ?? metadata.images ?? metadata.imageUrl),
+    videoUrl: textFromMetadata(metadata.videoUrl ?? metadata.video_url ?? metadata.demoVideoUrl),
+    youtubeUrl: textFromMetadata(metadata.youtubeUrl ?? metadata.youtube_url ?? metadata.youtubeVideoUrl),
+  }
+}
+
 function fallbackData(): NonNullable<FeatureControlData> {
   return {
     summary: {
@@ -175,6 +227,8 @@ function fallbackData(): NonNullable<FeatureControlData> {
 }
 
 function formFromFeature(feature: FeatureCard): FeatureForm {
+  const media = getFeatureMedia(feature)
+
   return {
     id: feature.id,
     title: feature.title,
@@ -185,6 +239,10 @@ function formFromFeature(feature: FeatureCard): FeatureForm {
     isPublished: feature.isPublished,
     allowWaitlist: feature.allowWaitlist,
     allowEarlyAccess: feature.allowEarlyAccess,
+    detailTagline: media.tagline,
+    imageUrls: media.imageUrls.join('\n'),
+    videoUrl: media.videoUrl,
+    youtubeUrl: media.youtubeUrl,
   }
 }
 
@@ -194,6 +252,7 @@ export function FeatureControlPanel({ initialData }: { initialData: FeatureContr
   const [interestDrafts, setInterestDrafts] = useState<Record<number, { status: InterestStatus; adminNotes: string }>>({})
   const [working, setWorking] = useState<string | null>(null)
   const [message, setMessage] = useState('')
+  const actionModal = useActionModal()
 
   const sortedFeatures = useMemo(
     () => [...data.features].sort((left, right) => left.sortOrder - right.sortOrder || left.id - right.id),
@@ -210,6 +269,13 @@ export function FeatureControlPanel({ initialData }: { initialData: FeatureContr
     setMessage('')
     try {
       const body = {
+        metadata: {
+          ...(featureForm.id ? data.features.find((feature) => feature.id === featureForm.id)?.metadata ?? {} : {}),
+          tagline: featureForm.detailTagline.trim() || null,
+          imageUrls: parseUrlLines(featureForm.imageUrls),
+          videoUrl: featureForm.videoUrl.trim() || null,
+          youtubeUrl: featureForm.youtubeUrl.trim() || null,
+        },
         title: featureForm.title.trim(),
         body: featureForm.body.trim(),
         status: featureForm.status,
@@ -238,7 +304,12 @@ export function FeatureControlPanel({ initialData }: { initialData: FeatureContr
   }
 
   async function deleteFeature(feature: FeatureCard) {
-    const confirmed = window.confirm(`Delete ${feature.title}? Waitlist and early access rows for this card will also be removed.`)
+    const confirmed = await actionModal.confirm({
+      title: `Delete ${feature.title}?`,
+      description: 'Waitlist and early access rows for this card will also be removed.',
+      confirmLabel: 'Delete feature',
+      variant: 'danger',
+    })
     if (!confirmed) return
 
     setWorking(`delete-${feature.id}`)
@@ -291,6 +362,7 @@ export function FeatureControlPanel({ initialData }: { initialData: FeatureContr
   }
 
   return (
+    <>
     <section className="space-y-6">
       {message ? <p className="rounded-md border border-border/70 bg-background/40 px-4 py-3 text-sm text-muted-foreground">{message}</p> : null}
 
@@ -312,6 +384,29 @@ export function FeatureControlPanel({ initialData }: { initialData: FeatureContr
               placeholder="Feature description"
               className="min-h-28 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
             />
+            <Input
+              value={featureForm.detailTagline}
+              onChange={(event) => setFeatureForm((current) => ({ ...current, detailTagline: event.target.value }))}
+              placeholder="Detail tagline for Know more sheet"
+            />
+            <textarea
+              value={featureForm.imageUrls}
+              onChange={(event) => setFeatureForm((current) => ({ ...current, imageUrls: event.target.value }))}
+              placeholder="Image URLs, one per line"
+              className="min-h-24 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            />
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Input
+                value={featureForm.videoUrl}
+                onChange={(event) => setFeatureForm((current) => ({ ...current, videoUrl: event.target.value }))}
+                placeholder="Video URL"
+              />
+              <Input
+                value={featureForm.youtubeUrl}
+                onChange={(event) => setFeatureForm((current) => ({ ...current, youtubeUrl: event.target.value }))}
+                placeholder="YouTube video URL"
+              />
+            </div>
             <div className="grid gap-3 sm:grid-cols-3">
               <select
                 value={featureForm.status}
@@ -390,40 +485,56 @@ export function FeatureControlPanel({ initialData }: { initialData: FeatureContr
                 No feature cards found.
               </div>
             ) : (
-              sortedFeatures.map((feature) => (
-                <article key={feature.id} className="rounded-xl border border-border/70 bg-background/30 p-4">
-                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                    <div className="space-y-2">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Badge variant={toneForStatus(feature.status)}>{feature.status === 'available' ? 'available now' : 'coming soon'}</Badge>
-                        <Badge variant={feature.isPublished ? 'success' : 'secondary'}>{feature.isPublished ? 'published' : 'draft'}</Badge>
-                        {feature.tag ? <Badge variant="outline">{feature.tag}</Badge> : null}
+              sortedFeatures.map((feature) => {
+                const media = getFeatureMedia(feature)
+                return (
+                  <article key={feature.id} className="rounded-xl border border-border/70 bg-background/30 p-4">
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                      <div className="space-y-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge variant={toneForStatus(feature.status)}>{feature.status === 'available' ? 'available now' : 'coming soon'}</Badge>
+                          <Badge variant={feature.isPublished ? 'success' : 'secondary'}>{feature.isPublished ? 'published' : 'draft'}</Badge>
+                          {feature.tag ? <Badge variant="outline">{feature.tag}</Badge> : null}
+                          {media.imageUrls.length ? (
+                            <Badge variant="outline">
+                              <ImageIcon className="h-3.5 w-3.5" />
+                              {media.imageUrls.length} image{media.imageUrls.length === 1 ? '' : 's'}
+                            </Badge>
+                          ) : null}
+                          {media.videoUrl || media.youtubeUrl ? (
+                            <Badge variant="outline">
+                              <PlayCircle className="h-3.5 w-3.5" />
+                              video
+                            </Badge>
+                          ) : null}
+                        </div>
+                        <h3 className="text-lg font-semibold">{feature.title}</h3>
+                        {media.tagline ? <p className="text-sm font-medium">{media.tagline}</p> : null}
+                        <p className="max-w-3xl text-sm leading-6 text-muted-foreground">{feature.body}</p>
+                        <p className="text-xs text-muted-foreground">
+                          Sort {feature.sortOrder} | Waitlist {feature.stats.waitlist} | Early access {feature.stats.earlyAccess}
+                        </p>
                       </div>
-                      <h3 className="text-lg font-semibold">{feature.title}</h3>
-                      <p className="max-w-3xl text-sm leading-6 text-muted-foreground">{feature.body}</p>
-                      <p className="text-xs text-muted-foreground">
-                        Sort {feature.sortOrder} | Waitlist {feature.stats.waitlist} | Early access {feature.stats.earlyAccess}
-                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        <Button type="button" variant="outline" size="sm" onClick={() => setFeatureForm(formFromFeature(feature))}>
+                          <Pencil className="h-4 w-4" />
+                          Edit
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => deleteFeature(feature)}
+                          disabled={working === `delete-${feature.id}`}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                          Delete
+                        </Button>
+                      </div>
                     </div>
-                    <div className="flex flex-wrap gap-2">
-                      <Button type="button" variant="outline" size="sm" onClick={() => setFeatureForm(formFromFeature(feature))}>
-                        <Pencil className="h-4 w-4" />
-                        Edit
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => deleteFeature(feature)}
-                        disabled={working === `delete-${feature.id}`}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                        Delete
-                      </Button>
-                    </div>
-                  </div>
-                </article>
-              ))
+                  </article>
+                )
+              })
             )}
           </CardContent>
         </Card>
@@ -493,5 +604,7 @@ export function FeatureControlPanel({ initialData }: { initialData: FeatureContr
         </CardContent>
       </Card>
     </section>
+    {actionModal.modal}
+    </>
   )
 }

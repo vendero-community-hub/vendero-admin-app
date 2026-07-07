@@ -47,6 +47,7 @@ type Plan = {
 type PaymentGatewayOrder = {
   id: number
   publicId: string
+  subscriptionPlanId: number | null
   amount: number
   currency: string
   paymentMethod: string | null
@@ -57,6 +58,15 @@ type PaymentGatewayOrder = {
   orderId: string | null
   gatewayMode: string | null
   providerStatus: string | null
+  membership: {
+    id: number
+    status: string
+    paymentStatus: string
+    planName: string | null
+    planCode: string | null
+    expiresAt: string | null
+    active: boolean
+  } | null
   createdAt: string | null
   paidAt: string | null
   vendorProfile: {
@@ -262,51 +272,79 @@ export default async function PaymentGatewayPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {orders.map((order) => (
-                      <tr key={order.id} className="border-t border-border/60">
-                        <td className="px-4 py-4">
-                          <p className="font-medium">{orderKindLabel(order)}</p>
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            {order.orderId ?? order.providerReference ?? order.publicId}
-                          </p>
-                        </td>
-                        <td className="px-4 py-4">
-                          <p className="font-medium">{order.vendorProfile?.businessName ?? 'Unknown vendor'}</p>
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            {order.vendorProfile?.phone ?? 'No phone'}
-                          </p>
-                        </td>
-                        <td className="px-4 py-4">{order.plan?.name ?? 'Unmapped plan'}</td>
-                        <td className="px-4 py-4 font-semibold">
-                          {formatCurrency(order.amount, order.currency)}
-                        </td>
-                        <td className="px-4 py-4">
-                          <div className="flex flex-wrap gap-2">
-                            <Badge variant={variantForStatus(order.status)}>{order.status}</Badge>
-                            {order.providerStatus ? (
-                              <Badge variant="secondary">{order.providerStatus}</Badge>
-                            ) : null}
-                          </div>
-                        </td>
-                        <td className="px-4 py-4 text-muted-foreground">{formatDate(order.createdAt)}</td>
-                        <td className="px-4 py-4">
-                          <div className="flex flex-wrap gap-2">
-                            <Button asChild size="sm" variant="outline">
-                              <Link href={`/payment-gateway/${order.publicId ?? order.id}`}>
-                                Details
-                                <ArrowRight className="h-4 w-4" />
-                              </Link>
-                            </Button>
-                            {order.status === 'pending_verification' ? (
-                              <>
-                                <VerifyPaymentButton paymentId={order.id} decision="verify" />
-                                <VerifyPaymentButton paymentId={order.id} decision="reject" />
-                              </>
-                            ) : null}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
+                    {orders.map((order) => {
+                      const canCreateSubscription =
+                        order.kind === 'one_time_checkout' &&
+                        order.status === 'verified' &&
+                        Boolean(order.subscriptionPlanId) &&
+                        !order.membership?.active
+
+                      return (
+                        <tr key={order.id} className="border-t border-border/60">
+                          <td className="px-4 py-4">
+                            <p className="font-medium">{orderKindLabel(order)}</p>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              {order.orderId ?? order.providerReference ?? order.publicId}
+                            </p>
+                          </td>
+                          <td className="px-4 py-4">
+                            <p className="font-medium">
+                              {order.vendorProfile?.businessName ?? 'Unknown vendor'}
+                            </p>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              {order.vendorProfile?.phone ?? 'No phone'}
+                            </p>
+                          </td>
+                          <td className="px-4 py-4">{order.plan?.name ?? 'Unmapped plan'}</td>
+                          <td className="px-4 py-4 font-semibold">
+                            {formatCurrency(order.amount, order.currency)}
+                          </td>
+                          <td className="px-4 py-4">
+                            <div className="flex flex-wrap gap-2">
+                              <Badge variant={variantForStatus(order.status)}>{order.status}</Badge>
+                              {order.providerStatus ? (
+                                <Badge variant="secondary">{order.providerStatus}</Badge>
+                              ) : null}
+                              {order.membership ? (
+                                <Badge variant={order.membership.active ? 'success' : 'warning'}>
+                                  subscription {order.membership.active ? 'active' : order.membership.status}
+                                </Badge>
+                              ) : null}
+                            </div>
+                          </td>
+                          <td className="px-4 py-4 text-muted-foreground">{formatDate(order.createdAt)}</td>
+                          <td className="px-4 py-4">
+                            <div className="flex flex-wrap gap-2">
+                              <Button asChild size="sm" variant="outline">
+                                <Link href={`/payment-gateway/${order.publicId ?? order.id}`}>
+                                  Details
+                                  <ArrowRight className="h-4 w-4" />
+                                </Link>
+                              </Button>
+                              {order.status === 'pending_verification' ? (
+                                <>
+                                  <VerifyPaymentButton paymentId={order.id} decision="verify" />
+                                  <VerifyPaymentButton paymentId={order.id} decision="reject" />
+                                </>
+                              ) : canCreateSubscription ? (
+                                <VerifyPaymentButton
+                                  paymentId={order.id}
+                                  decision="verify"
+                                  label="Create subscription"
+                                  verifyTitle="Create subscription with this order?"
+                                  verifyDescription={
+                                    'This order is already verified but the vendor does not have active ' +
+                                    'subscription access. This will start subscription access from now using this order.'
+                                  }
+                                  verifyConfirmLabel="Create subscription"
+                                  defaultNotes="Subscription activated from verified order"
+                                />
+                              ) : null}
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>

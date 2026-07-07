@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
+import { useActionModal } from '@/components/ui/action-modal'
 
 function getAdminToken() {
   const tokenEntry = document.cookie
@@ -19,29 +20,53 @@ export function ReviewKycButton({
   decision: 'approve' | 'reject'
 }) {
   const [working, setWorking] = useState(false)
+  const actionModal = useActionModal()
 
   async function submitReview() {
     const token = getAdminToken()
-    const reviewNotes =
-      window.prompt(
+    const result = await actionModal.form({
+      title: decision === 'approve' ? 'Approve KYC document?' : 'Reject KYC document?',
+      description:
         decision === 'approve'
-          ? 'Optional review notes'
-          : 'Optional internal review notes',
-        ''
-      ) ?? ''
-    const rejectionReason =
-      decision === 'reject'
-        ? window.prompt('Rejection reason for this document', 'Document details do not match')
-        : ''
+          ? 'Add optional notes and profile updates before approving this document.'
+          : 'Provide a rejection reason before marking this document rejected.',
+      confirmLabel: decision === 'approve' ? 'Approve document' : 'Reject document',
+      variant: decision === 'reject' ? 'danger' : 'default',
+      fields:
+        decision === 'approve'
+          ? [
+              { name: 'reviewNotes', label: 'Review notes (optional)', type: 'textarea' },
+              { name: 'fullName', label: 'Name as per document (optional)' },
+              { name: 'businessName', label: 'Business name update (optional)' },
+              { name: 'contactName', label: 'Contact name update (optional)' },
+              { name: 'contactEmail', label: 'Email update (optional)' },
+              { name: 'city', label: 'City update (optional)' },
+              { name: 'state', label: 'State update (optional)' },
+            ]
+          : [
+              { name: 'reviewNotes', label: 'Internal review notes (optional)', type: 'textarea' },
+              {
+                name: 'rejectionReason',
+                label: 'Rejection reason',
+                defaultValue: 'Document details do not match',
+                required: true,
+                type: 'textarea',
+              },
+            ],
+    })
+    if (!result.confirmed) return
+
+    const reviewNotes = result.values.reviewNotes ?? ''
+    const rejectionReason = decision === 'reject' ? result.values.rejectionReason ?? '' : ''
     const profileUpdates =
       decision === 'approve'
         ? {
-            fullName: window.prompt('Name as per document (optional)', '') || undefined,
-            businessName: window.prompt('Business name update (optional)', '') || undefined,
-            contactName: window.prompt('Contact name update (optional)', '') || undefined,
-            contactEmail: window.prompt('Email update (optional)', '') || undefined,
-            city: window.prompt('City update (optional)', '') || undefined,
-            state: window.prompt('State update (optional)', '') || undefined,
+            fullName: result.values.fullName || undefined,
+            businessName: result.values.businessName || undefined,
+            contactName: result.values.contactName || undefined,
+            contactEmail: result.values.contactEmail || undefined,
+            city: result.values.city || undefined,
+            state: result.values.state || undefined,
           }
         : undefined
 
@@ -72,13 +97,16 @@ export function ReviewKycButton({
   }
 
   return (
-    <Button
-      onClick={submitReview}
-      size="sm"
-      variant={decision === 'approve' ? 'default' : 'outline'}
-      disabled={working}
-    >
-      {working ? 'Saving...' : decision === 'approve' ? 'Approve' : 'Reject'}
-    </Button>
+    <>
+      <Button
+        onClick={submitReview}
+        size="sm"
+        variant={decision === 'approve' ? 'default' : 'outline'}
+        disabled={working}
+      >
+        {working ? 'Saving...' : decision === 'approve' ? 'Approve' : 'Reject'}
+      </Button>
+      {actionModal.modal}
+    </>
   )
 }

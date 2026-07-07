@@ -58,6 +58,12 @@ const realtimeDefaults: Record<AppEnvironment, string> = {
   prod: "https://realtime.vendero.in",
 };
 
+const whiteLabelDefaults: Record<AppEnvironment, string> = {
+  dev: "http://localhost:3004",
+  test: "https://link.vendero.in",
+  prod: "https://link.vendero.in",
+};
+
 export const API_URL =
   process.env.API_URL ??
   process.env.NEXT_PUBLIC_API_URL ??
@@ -104,4 +110,32 @@ export function socketIoEndpoint(rawUrl = REALTIME_URL) {
         "/socket.io",
     };
   }
+}
+
+export const WHITE_LABEL_WEB_URL = (
+  process.env.NEXT_PUBLIC_WHITE_LABEL_WEB_URL ??
+  process.env.VENDERO_WHITE_LABEL_URL ??
+  process.env.PUBLIC_LINK_BASE_URL ??
+  whiteLabelDefaults[APP_ENV]
+).replace(/\/+$/, "");
+
+export function whiteLabelWebUrl(pathname = "/") {
+  const path = pathname.startsWith("/") ? pathname : `/${pathname}`;
+  return `${WHITE_LABEL_WEB_URL}${path}`;
+}
+
+export function normalizeWhiteLabelPreviewUrl(value?: string | null) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+
+  try {
+    const parsed = new URL(raw);
+    if (parsed.hostname === "link.vendero.in") {
+      return `${WHITE_LABEL_WEB_URL}${parsed.pathname}${parsed.search}${parsed.hash}`;
+    }
+  } catch {
+    return raw;
+  }
+
+  return raw;
 }

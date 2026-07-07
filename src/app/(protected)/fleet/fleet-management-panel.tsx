@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { useActionModal } from '@/components/ui/action-modal'
 
 type CabModel = {
   id: number
@@ -134,6 +135,7 @@ export function FleetManagementPanel({ initialData }: { initialData: FleetData |
   const [cabForm, setCabForm] = useState<CabForm>(() => emptyCabForm(String(initialData?.categories?.[0]?.id ?? '')))
   const [working, setWorking] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
+  const actionModal = useActionModal()
 
   const allCabs = useMemo(() => data.categories.flatMap((category) => category.models), [data.categories])
 
@@ -192,7 +194,12 @@ export function FleetManagementPanel({ initialData }: { initialData: FleetData |
   }
 
   async function deleteCategory(category: CabCategory) {
-    const confirmed = window.confirm(`Delete ${category.name}? Deactivate if this category is already used.`)
+    const confirmed = await actionModal.confirm({
+      title: `Delete ${category.name}?`,
+      description: 'Deactivate instead if this category is already used.',
+      confirmLabel: 'Delete category',
+      variant: 'danger',
+    })
     if (!confirmed) return
     setWorking(`category-delete-${category.id}`)
     setMessage(null)
@@ -207,7 +214,12 @@ export function FleetManagementPanel({ initialData }: { initialData: FleetData |
   }
 
   async function deleteCab(cab: CabModel) {
-    const confirmed = window.confirm(`Delete ${cab.name}? Deactivate if this cab is already used.`)
+    const confirmed = await actionModal.confirm({
+      title: `Delete ${cab.name}?`,
+      description: 'Deactivate instead if this cab is already used.',
+      confirmLabel: 'Delete cab',
+      variant: 'danger',
+    })
     if (!confirmed) return
     setWorking(`cab-delete-${cab.id}`)
     setMessage(null)
@@ -243,6 +255,7 @@ export function FleetManagementPanel({ initialData }: { initialData: FleetData |
   }
 
   return (
+    <>
     <section className="space-y-6">
       {message ? (
         <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
@@ -469,5 +482,7 @@ export function FleetManagementPanel({ initialData }: { initialData: FleetData |
         </CardContent>
       </Card>
     </section>
+    {actionModal.modal}
+    </>
   )
 }

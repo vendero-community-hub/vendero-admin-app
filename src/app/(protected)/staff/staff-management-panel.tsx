@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { useActionModal } from '@/components/ui/action-modal'
 
 type StaffRecord = {
   id: number
@@ -119,6 +120,7 @@ export function StaffManagementPanel({ initialData }: { initialData: StaffOvervi
   const [editingId, setEditingId] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const actionModal = useActionModal()
 
   const filteredStaff = useMemo(() => {
     const query = search.trim().toLowerCase()
@@ -186,7 +188,13 @@ export function StaffManagementPanel({ initialData }: { initialData: StaffOvervi
   }
 
   async function removeStaff(id: number) {
-    if (!window.confirm('Delete this staff account? This will revoke their sessions.')) return
+    const confirmed = await actionModal.confirm({
+      title: 'Delete staff account?',
+      description: 'This will revoke their sessions and remove admin access.',
+      confirmLabel: 'Delete staff',
+      variant: 'danger',
+    })
+    if (!confirmed) return
     setWorkingId(id)
     setError(null)
     try {
@@ -215,6 +223,7 @@ export function StaffManagementPanel({ initialData }: { initialData: StaffOvervi
   }
 
   return (
+    <>
     <section className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
       <Card className="border-border/70 bg-card/80">
         <CardHeader>
@@ -431,5 +440,7 @@ export function StaffManagementPanel({ initialData }: { initialData: StaffOvervi
         </CardContent>
       </Card>
     </section>
+    {actionModal.modal}
+    </>
   )
 }

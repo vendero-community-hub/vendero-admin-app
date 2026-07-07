@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { useActionModal } from '@/components/ui/action-modal'
 
 type BadgeTone = 'default' | 'secondary' | 'outline' | 'success' | 'warning' | 'danger'
 
@@ -238,6 +239,7 @@ export function WhiteLabelAdminPanel({ initialData }: { initialData: WhiteLabelA
   const [detail, setDetail] = useState<LinkDetail | null>(null)
   const [working, setWorking] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const actionModal = useActionModal()
 
   const selectedLink = useMemo(
     () => data?.links.find((link) => link.id === selectedLinkId) ?? detail?.link ?? null,
@@ -279,7 +281,15 @@ export function WhiteLabelAdminPanel({ initialData }: { initialData: WhiteLabelA
   }
 
   async function revokeLink(id: number) {
-    const reason = window.prompt('Revoke reason')
+    const reason = await actionModal.prompt({
+      title: 'Revoke public link?',
+      description: 'Provide the internal reason for revoking this white-label/public link.',
+      label: 'Revoke reason',
+      required: true,
+      confirmLabel: 'Revoke link',
+      variant: 'danger',
+      textarea: true,
+    })
     if (!reason?.trim()) return
     setWorking(`revoke-${id}`)
     setError(null)
@@ -296,6 +306,7 @@ export function WhiteLabelAdminPanel({ initialData }: { initialData: WhiteLabelA
   }
 
   return (
+    <>
     <section className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
       <Card className="border-border/70 bg-card/80">
         <CardHeader className="gap-4">
@@ -589,6 +600,7 @@ export function WhiteLabelAdminPanel({ initialData }: { initialData: WhiteLabelA
         </Card>
       </div>
     </section>
+    {actionModal.modal}
+    </>
   )
 }
-

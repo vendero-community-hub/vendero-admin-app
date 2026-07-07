@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import {
   Building2,
   CheckCircle2,
@@ -8,6 +9,7 @@ import {
   Eye,
   EyeOff,
   Search,
+  Settings,
   ShieldAlert,
   ShieldCheck,
   Store,
@@ -26,6 +28,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { useActionModal } from "@/components/ui/action-modal";
 
 type BadgeTone =
   | "default"
@@ -166,6 +169,35 @@ type VendorDetail = {
     metadata: string | Record<string, unknown> | null;
     createdAt: string;
   }>;
+  featureUsage: {
+    summary: {
+      featureCount: number;
+      enabledFeatureCount: number;
+      usedFeatureCount: number;
+      unusedFeatureCount: number;
+      eventCount: number;
+      lastUsedAt: string | null;
+    };
+    features: Array<{
+      featureKey: string;
+      title: string;
+      module: string;
+      status: string;
+      isEnabled: boolean;
+      eventCount: number;
+      hasUsed: boolean;
+      lastUsedAt: string | null;
+    }>;
+    recentEvents: Array<{
+      id: number;
+      featureKey: string;
+      eventName: string;
+      eventType: string;
+      routeName: string | null;
+      screenName: string | null;
+      occurredAt: string | null;
+    }>;
+  };
 };
 
 type ResourceType = "drivers" | "cabs";
@@ -416,6 +448,91 @@ function ResourceVerificationList({
   );
 }
 
+function VendorFeatureUsage({
+  featureUsage,
+}: {
+  featureUsage: VendorDetail["featureUsage"] | undefined;
+}) {
+  const summary = featureUsage?.summary;
+  const features = featureUsage?.features ?? [];
+
+  return (
+    <div className="rounded-lg border border-border/70 bg-card/60 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="font-semibold">Feature usage</p>
+          <p className="text-sm text-muted-foreground">
+            Used {summary?.usedFeatureCount ?? 0} of{" "}
+            {summary?.featureCount ?? features.length} tracked feature tags.
+          </p>
+        </div>
+        <Badge variant={(summary?.usedFeatureCount ?? 0) > 0 ? "success" : "warning"}>
+          {summary?.eventCount ?? 0} events
+        </Badge>
+      </div>
+
+      <div className="mt-4 grid grid-cols-3 gap-3 text-sm">
+        <div className="rounded-lg border border-border/70 bg-background/30 p-3">
+          <p className="text-muted-foreground">Used</p>
+          <p className="mt-1 text-xl font-semibold">{summary?.usedFeatureCount ?? 0}</p>
+        </div>
+        <div className="rounded-lg border border-border/70 bg-background/30 p-3">
+          <p className="text-muted-foreground">Not used</p>
+          <p className="mt-1 text-xl font-semibold">{summary?.unusedFeatureCount ?? 0}</p>
+        </div>
+        <div className="rounded-lg border border-border/70 bg-background/30 p-3">
+          <p className="text-muted-foreground">Last use</p>
+          <p className="mt-1 text-sm font-semibold">{formatDate(summary?.lastUsedAt)}</p>
+        </div>
+      </div>
+
+      <div className="mt-4 max-h-72 space-y-2 overflow-auto pr-1">
+        {features.map((feature) => (
+          <div
+            key={feature.featureKey}
+            className="grid gap-2 rounded-lg border border-border/70 bg-background/30 px-3 py-2 text-sm md:grid-cols-[1fr_auto]"
+          >
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="truncate font-medium">{feature.title}</p>
+                <Badge
+                  variant={
+                    !feature.isEnabled
+                      ? "warning"
+                      : feature.hasUsed
+                        ? "success"
+                        : "secondary"
+                  }
+                >
+                  {!feature.isEnabled
+                    ? "not enabled"
+                    : feature.hasUsed
+                      ? "used"
+                      : "not used"}
+                </Badge>
+              </div>
+              <p className="mt-1 truncate text-xs text-muted-foreground">
+                {feature.module} - {feature.featureKey}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 md:justify-end">
+              <Badge variant="outline">{feature.eventCount} events</Badge>
+              <span className="text-xs text-muted-foreground">
+                {formatDate(feature.lastUsedAt)}
+              </span>
+            </div>
+          </div>
+        ))}
+        {!features.length ? (
+          <p className="text-sm text-muted-foreground">
+            No feature usage data has been collected for this vendor yet.
+          </p>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function VendorProfileModal({
   vendor,
   detail,
@@ -630,6 +747,8 @@ function VendorProfileModal({
                     ) : null}
                   </div>
                 </div>
+
+                <VendorFeatureUsage featureUsage={detail?.featureUsage} />
               </section>
 
               <aside className="space-y-4">
@@ -746,6 +865,7 @@ export function VendorManagementPanel({
   const [message, setMessage] = useState<string | null>(
     overview ? null : "Vendor data is unavailable.",
   );
+  const actionModal = useActionModal();
 
   const filteredVendors = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -820,10 +940,16 @@ export function VendorManagementPanel({
     }
   }
 
-  function updateActivation(vendor: VendorRecord) {
+  async function updateActivation(vendor: VendorRecord) {
     const nextActive = !vendor.isActive;
-    if (!nextActive && !window.confirm(`Deactivate ${vendor.businessName}?`)) {
-      return;
+    if (!nextActive) {
+      const confirmed = await actionModal.confirm({
+        title: `Deactivate ${vendor.businessName}?`,
+        description: "The vendor will no longer be active in admin-controlled workflows.",
+        confirmLabel: "Deactivate vendor",
+        variant: "danger",
+      });
+      if (!confirmed) return;
     }
 
     return runAction(
@@ -888,9 +1014,13 @@ export function VendorManagementPanel({
   }
 
   async function deleteVendor(vendor: VendorRecord) {
-    const confirmed = window.confirm(
-      `Delete ${vendor.businessName}? This removes the vendor account, sessions, profile, and linked vendor records.`,
-    );
+    const confirmed = await actionModal.confirm({
+      title: `Delete ${vendor.businessName}?`,
+      description:
+        "This removes the vendor account, sessions, profile, and linked vendor records.",
+      confirmLabel: "Delete vendor",
+      variant: "danger",
+    });
 
     if (!confirmed) return;
 
@@ -1138,6 +1268,17 @@ export function VendorManagementPanel({
                       <Button
                         size="sm"
                         variant="outline"
+                        asChild
+                        title="Manage vendor account"
+                      >
+                        <Link href={`/vendors/${vendor.id}`}>
+                          <Settings className="h-4 w-4" />
+                          Manage
+                        </Link>
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
                         onClick={() => updateActivation(vendor)}
                         disabled={workingAction === activationKey}
                         title={
@@ -1259,6 +1400,7 @@ export function VendorManagementPanel({
           onResourceVerification={updateResourceVerification}
         />
       ) : null}
+      {actionModal.modal}
     </main>
   );
 }

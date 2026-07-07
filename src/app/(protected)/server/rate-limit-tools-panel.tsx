@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { useActionModal } from '@/components/ui/action-modal'
 
 type RateLimitEntry = {
   scope: 'otp_guard' | 'route_rate_limit'
@@ -93,6 +94,7 @@ export function RateLimitToolsPanel() {
   const [working, setWorking] = useState<'inspect' | 'clear' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<RateLimitResult | null>(null)
+  const actionModal = useActionModal()
 
   const activeEntries = useMemo(
     () => result?.entries.filter((entry) => entry.active) ?? [],
@@ -134,7 +136,13 @@ export function RateLimitToolsPanel() {
       return
     }
 
-    if (!window.confirm('Clear auth rate limits for this phone/IP target?')) return
+    const confirmed = await actionModal.confirm({
+      title: 'Clear auth rate limits?',
+      description: 'This removes active OTP and route-limit buckets for the selected phone or IP target.',
+      confirmLabel: 'Clear limits',
+      variant: 'danger',
+    })
+    if (!confirmed) return
 
     setWorking('clear')
     setError(null)
@@ -153,6 +161,7 @@ export function RateLimitToolsPanel() {
   }
 
   return (
+    <>
     <Card className="border-border/70 bg-card/80">
       <CardHeader className="gap-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -281,5 +290,7 @@ export function RateLimitToolsPanel() {
         </CardContent>
       ) : null}
     </Card>
+    {actionModal.modal}
+    </>
   )
 }

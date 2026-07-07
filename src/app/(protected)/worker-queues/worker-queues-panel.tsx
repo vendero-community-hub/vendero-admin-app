@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { useActionModal } from '@/components/ui/action-modal'
 
 type QueueRecord = { key: string; pending: number; delayed: number; deadLetters: number }
 type FailedJob = {
@@ -70,6 +71,7 @@ export function WorkerQueuesPanel({ initialData }: { initialData: WorkerQueuesDa
   const [query, setQuery] = useState('')
   const [working, setWorking] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const actionModal = useActionModal()
 
   const selectedFailures = useMemo(() => {
     const rows = failedJobs.find((item) => item.key === selectedQueue)?.jobs ?? []
@@ -117,7 +119,13 @@ export function WorkerQueuesPanel({ initialData }: { initialData: WorkerQueuesDa
 
   async function cancelJob(job: FailedJob) {
     const identifier = job.id ?? job.raw
-    if (!window.confirm('Cancel this queued/dead-letter job?')) return
+    const confirmed = await actionModal.confirm({
+      title: 'Cancel queued job?',
+      description: 'This removes the selected queued or dead-letter job from the worker queue.',
+      confirmLabel: 'Cancel job',
+      variant: 'danger',
+    })
+    if (!confirmed) return
     setWorking(`cancel-${identifier}`)
     setError(null)
     try {
@@ -133,6 +141,7 @@ export function WorkerQueuesPanel({ initialData }: { initialData: WorkerQueuesDa
   const queues = overview?.queues ?? []
 
   return (
+    <>
     <section className="grid gap-6 xl:grid-cols-[0.85fr_1.15fr]">
       <Card className="border-border/70 bg-card/80">
         <CardHeader className="gap-4">
@@ -223,5 +232,7 @@ export function WorkerQueuesPanel({ initialData }: { initialData: WorkerQueuesDa
         </CardContent>
       </Card>
     </section>
+    {actionModal.modal}
+    </>
   )
 }

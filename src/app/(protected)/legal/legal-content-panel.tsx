@@ -17,6 +17,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { useActionModal } from '@/components/ui/action-modal'
 
 type BadgeTone = 'default' | 'secondary' | 'outline' | 'success' | 'warning' | 'danger'
 type LegalPolicyStatus = 'draft' | 'published' | 'archived'
@@ -219,6 +220,7 @@ export function LegalContentPanel({ initialData }: { initialData: LegalPoliciesD
   })
   const [message, setMessage] = useState('')
   const [working, setWorking] = useState<string | null>(null)
+  const actionModal = useActionModal()
 
   const sortedPolicies = useMemo(
     () =>
@@ -272,7 +274,12 @@ export function LegalContentPanel({ initialData }: { initialData: LegalPoliciesD
   }
 
   async function deletePolicy(policy: LegalPolicy) {
-    const confirmed = window.confirm(`Delete ${policy.title}? This removes it from public apps and policy links until it is recreated.`)
+    const confirmed = await actionModal.confirm({
+      title: `Delete ${policy.title}?`,
+      description: 'This removes it from public apps and policy links until it is recreated.',
+      confirmLabel: 'Delete policy',
+      variant: 'danger',
+    })
     if (!confirmed) return
 
     setWorking(`delete-${policy.id}`)
@@ -296,6 +303,7 @@ export function LegalContentPanel({ initialData }: { initialData: LegalPoliciesD
     form.contentHtml.trim().length < 10
 
   return (
+    <>
     <section className="space-y-6">
       {message ? (
         <p className="rounded-md border border-border/70 bg-background/40 px-4 py-3 text-sm text-muted-foreground">{message}</p>
@@ -436,5 +444,7 @@ export function LegalContentPanel({ initialData }: { initialData: LegalPoliciesD
         </Card>
       </div>
     </section>
+    {actionModal.modal}
+    </>
   )
 }

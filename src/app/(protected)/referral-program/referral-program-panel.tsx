@@ -14,6 +14,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { useActionModal } from '@/components/ui/action-modal'
 
 type BadgeTone = 'default' | 'secondary' | 'outline' | 'success' | 'warning' | 'danger'
 
@@ -41,7 +42,8 @@ type ReferralSettings = {
   endAt: string | null
   termsTitle: string
   termsBody: string | null
-  rules: Record<string, unknown>
+  rules: Record<string, unknown> & { maxRewardsPerReferee?: number | null }
+  maxRewardsPerReferee?: number | null
 }
 
 type VendorRule = {
@@ -55,6 +57,35 @@ type VendorRule = {
   endAt: string | null
   maxRewardsPerReferee: number | null
   notes: string | null
+  vendor: VendorSummary | null
+}
+
+type ReferralPayoutDetails = {
+  status: 'not_submitted' | 'pending_approval' | 'approved' | 'rejected'
+  bankAccountHolderName?: string | null
+  accountHolderName: string | null
+  bankName: string | null
+  bankAccountNumber: string | null
+  bankAccountNumberMasked: string | null
+  bankIfscCode?: string | null
+  ifscCode: string | null
+  upiId: string | null
+  submittedAt: string | null
+  approvedAt?: string | null
+  rejectedAt?: string | null
+  reviewedBy: number | null
+  reviewNotes?: string | null
+  rejectionReason: string | null
+}
+
+type ReferralAccount = {
+  id: number
+  vendorProfileId: number
+  referralCode: string
+  status: 'active' | 'closed'
+  joinedAt: string | null
+  termsAcceptedAt: string | null
+  payoutDetails: ReferralPayoutDetails
   vendor: VendorSummary | null
 }
 
@@ -99,6 +130,8 @@ export type ReferralProgramData = {
     closedReferrals: number
     paidRewardAmount: number
     payableRewardAmount: number
+    qualifiedReferrals?: number
+    pendingPayoutApprovals?: number
     rewardingReferrals: number
     totalDiscountAmount: number
     totalReferrals: number
@@ -106,6 +139,7 @@ export type ReferralProgramData = {
     vendorAccounts: number
     vendorSpecificRules: number
   }
+  accounts: ReferralAccount[]
   chart: Array<{ label: string; rewards: number; amount: number }>
   terms: {
     title: string
@@ -128,6 +162,7 @@ type SettingsForm = {
   endAt: string
   termsTitle: string
   termsBody: string
+  maxRewardsPerReferee: string
 }
 
 type RuleForm = {
@@ -167,13 +202,16 @@ function fallbackData(): NonNullable<ReferralProgramData> {
       endAt: null,
       termsTitle: 'Vendero Referral Rewards',
       termsBody: '',
-      rules: {},
+      rules: { maxRewardsPerReferee: null },
+      maxRewardsPerReferee: null,
     },
     analytics: {
       activeReferrals: 0,
       closedReferrals: 0,
       paidRewardAmount: 0,
       payableRewardAmount: 0,
+      qualifiedReferrals: 0,
+      pendingPayoutApprovals: 0,
       rewardingReferrals: 0,
       totalDiscountAmount: 0,
       totalReferrals: 0,
@@ -181,6 +219,7 @@ function fallbackData(): NonNullable<ReferralProgramData> {
       vendorAccounts: 0,
       vendorSpecificRules: 0,
     },
+    accounts: [],
     chart: [],
     terms: {
       title: 'Vendero Referral Rewards',
@@ -250,10 +289,20 @@ function inputDate(value?: string | null) {
   return date.toISOString().slice(0, 10)
 }
 
+function positiveInteger(value: unknown) {
+  if (value === null || value === undefined || value === '') return null
+  const number = Math.floor(Number(value))
+  return Number.isFinite(number) && number > 0 ? number : null
+}
+
+function settingsMaxRewards(settings: ReferralSettings) {
+  return positiveInteger(settings.maxRewardsPerReferee ?? settings.rules?.maxRewardsPerReferee)
+}
+
 function statusTone(status: string): BadgeTone {
-  if (['active', 'rewarding', 'payable', 'paid'].includes(status)) return 'success'
-  if (['paused', 'pending', 'inherit'].includes(status)) return 'warning'
-  if (['closed', 'blocked', 'cancelled'].includes(status)) return 'danger'
+  if (['active', 'rewarding', 'payable', 'paid', 'approved'].includes(status)) return 'success'
+  if (['paused', 'pending', 'pending_approval', 'inherit', 'not_submitted'].includes(status)) return 'warning'
+  if (['closed', 'blocked', 'cancelled', 'rejected'].includes(status)) return 'danger'
   return 'secondary'
 }
 
@@ -273,6 +322,9 @@ function settingsFormFrom(settings: ReferralSettings): SettingsForm {
     endAt: inputDate(settings.endAt),
     termsTitle: settings.termsTitle ?? 'Vendero Referral Rewards',
     termsBody: settings.termsBody ?? '',
+    maxRewardsPerReferee: settingsMaxRewards(settings)
+      ? String(settingsMaxRewards(settings))
+      : '',
   }
 }
 
@@ -359,11 +411,23 @@ export function ReferralProgramPanel({ initialData }: { initialData: ReferralPro
   const [termsModalOpen, setTermsModalOpen] = useState(false)
   const [working, setWorking] = useState<string | null>(null)
   const [message, setMessage] = useState('')
+  const actionModal = useActionModal()
   const currency = data.settings.currency ?? 'INR'
   const maxChartAmount = Math.max(1, ...data.chart.map((item) => item.amount))
   const payableLedger = useMemo(
     () => data.ledger.filter((entry) => entry.entryType === 'reward' && entry.status === 'payable'),
     [data.ledger]
+  )
+  const payoutAccounts = useMemo(
+    () =>
+      [...(data.accounts ?? [])]
+        .filter((account) => account.payoutDetails?.status !== 'not_submitted')
+        .sort((left, right) => {
+          const leftPending = left.payoutDetails?.status === 'pending_approval' ? 0 : 1
+          const rightPending = right.payoutDetails?.status === 'pending_approval' ? 0 : 1
+          return leftPending - rightPending
+        }),
+    [data.accounts]
   )
 
   async function refresh() {
@@ -380,6 +444,12 @@ export function ReferralProgramPanel({ initialData }: { initialData: ReferralPro
       const nextData = (await requestJson(
         '/api/v1/admin/referral-program/settings',
         {
+          rules: {
+            ...(data.settings.rules ?? {}),
+            maxRewardsPerReferee: settingsForm.maxRewardsPerReferee
+              ? Number(settingsForm.maxRewardsPerReferee)
+              : null,
+          },
           status: settingsForm.status,
           eligibilityMode: settingsForm.eligibilityMode,
           defaultReferralAmount: Number(settingsForm.defaultReferralAmount || 0),
@@ -436,7 +506,13 @@ export function ReferralProgramPanel({ initialData }: { initialData: ReferralPro
   }
 
   async function deleteRule(rule: VendorRule) {
-    if (!window.confirm(`Delete referral rule for ${vendorName(rule.vendor)}?`)) return
+    const confirmed = await actionModal.confirm({
+      title: 'Delete referral rule?',
+      description: `Delete referral rule for ${vendorName(rule.vendor)}?`,
+      confirmLabel: 'Delete rule',
+      variant: 'danger',
+    })
+    if (!confirmed) return
     setWorking(`delete-rule-${rule.id}`)
     setMessage('')
     try {
@@ -473,6 +549,43 @@ export function ReferralProgramPanel({ initialData }: { initialData: ReferralPro
       setMessage(`Ledger entry marked ${status}.`)
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Unable to update ledger')
+    } finally {
+      setWorking(null)
+    }
+  }
+
+  async function updatePayoutStatus(
+    account: ReferralAccount,
+    status: 'approved' | 'rejected'
+  ) {
+    if (status === 'rejected') {
+      const confirmed = await actionModal.confirm({
+        title: 'Reject payout details?',
+        description: `Reject payout details for ${vendorName(account.vendor)}? The vendor can resubmit from the mobile app.`,
+        confirmLabel: 'Reject details',
+        variant: 'danger',
+      })
+      if (!confirmed) return
+    }
+
+    setWorking(`payout-${account.id}-${status}`)
+    setMessage('')
+    try {
+      const nextData = (await requestJson(
+        `/api/v1/admin/referral-program/accounts/${account.id}/payout-status`,
+        {
+          status,
+          notes:
+            status === 'rejected'
+              ? 'Rejected from admin reward program panel.'
+              : 'Approved from admin reward program panel.',
+        },
+        'POST'
+      )) as NonNullable<ReferralProgramData>
+      setData(nextData)
+      setMessage(`Payout details ${status}.`)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Unable to update payout status')
     } finally {
       setWorking(null)
     }
@@ -539,6 +652,28 @@ export function ReferralProgramPanel({ initialData }: { initialData: ReferralPro
                     }))
                   }
                 />
+              </label>
+              <label className="space-y-2 text-sm">
+                <span className="text-muted-foreground">Bonus frequency</span>
+                <select
+                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                  value={settingsForm.maxRewardsPerReferee}
+                  onChange={(event) =>
+                    setSettingsForm((current) => ({
+                      ...current,
+                      maxRewardsPerReferee: event.target.value,
+                    }))
+                  }
+                >
+                  <option value="">Every verified payment</option>
+                  <option value="1">One time per referred vendor</option>
+                  <option value="2">First 2 paid subscriptions</option>
+                  <option value="3">First 3 paid subscriptions</option>
+                  <option value="12">First 12 paid subscriptions</option>
+                </select>
+                <p className="text-xs leading-5 text-muted-foreground">
+                  Use every payment for monthly rewards. Use one time for a single bonus.
+                </p>
               </label>
               <label className="space-y-2 text-sm">
                 <span className="text-muted-foreground">Eligibility mode</span>
@@ -609,9 +744,9 @@ export function ReferralProgramPanel({ initialData }: { initialData: ReferralPro
             <div className="grid gap-3 sm:grid-cols-4">
               {[
                 ['Vendor codes', data.analytics.vendorAccounts],
+                ['Payout approvals', data.analytics.pendingPayoutApprovals ?? 0],
+                ['Qualified', data.analytics.qualifiedReferrals ?? data.analytics.rewardingReferrals],
                 ['Rewarding', data.analytics.rewardingReferrals],
-                ['Specific rules', data.analytics.vendorSpecificRules],
-                ['Closed', data.analytics.closedReferrals],
               ].map(([label, value]) => (
                 <div key={label} className="rounded-xl border border-border/70 bg-background/35 p-3">
                   <p className="text-xs text-muted-foreground">{label}</p>
@@ -642,6 +777,98 @@ export function ReferralProgramPanel({ initialData }: { initialData: ReferralPro
           </CardContent>
         </Card>
       </section>
+
+      <Card className="border-border/70 bg-card/85">
+        <CardHeader className="flex-row items-start justify-between gap-4 space-y-0">
+          <div>
+            <CardTitle>Bank & UPI Approvals</CardTitle>
+            <CardDescription>
+              Review payout details submitted by vendors before reward payments are marked paid.
+            </CardDescription>
+          </div>
+          <Badge variant="warning" className="rounded-full px-3 py-1">
+            {data.analytics.pendingPayoutApprovals ?? 0} pending
+          </Badge>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {payoutAccounts.slice(0, 12).map((account) => {
+            const payout = account.payoutDetails
+            return (
+              <div key={account.id} className="rounded-xl border border-border/70 bg-background/35 p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="font-semibold">{vendorName(account.vendor)}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Code {account.referralCode} - submitted {formatDate(payout.submittedAt)}
+                    </p>
+                  </div>
+                  <Badge variant={statusTone(payout.status)} className="rounded-full px-3 py-1">
+                    {payout.status.replace(/_/g, ' ')}
+                  </Badge>
+                </div>
+                <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="rounded-lg border border-border/60 bg-background/40 p-3">
+                    <p className="text-xs text-muted-foreground">Account holder</p>
+                    <p className="mt-1 font-medium">
+                      {payout.bankAccountHolderName ?? payout.accountHolderName ?? 'Not set'}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-border/60 bg-background/40 p-3">
+                    <p className="text-xs text-muted-foreground">Bank account</p>
+                    <p className="mt-1 font-mono text-xs">
+                      {payout.bankAccountNumber ?? payout.bankAccountNumberMasked ?? 'Not set'}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-border/60 bg-background/40 p-3">
+                    <p className="text-xs text-muted-foreground">Bank / IFSC</p>
+                    <p className="mt-1 font-medium">{payout.bankName ?? 'Not set'}</p>
+                    <p className="mt-1 font-mono text-xs text-muted-foreground">
+                      {payout.bankIfscCode ?? payout.ifscCode ?? 'IFSC not set'}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-border/60 bg-background/40 p-3">
+                    <p className="text-xs text-muted-foreground">UPI ID</p>
+                    <p className="mt-1 font-mono text-xs">{payout.upiId ?? 'Not set'}</p>
+                  </div>
+                </div>
+                {payout.status === 'pending_approval' ? (
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      onClick={() => updatePayoutStatus(account, 'approved')}
+                      disabled={working === `payout-${account.id}-approved`}
+                    >
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                      Approve
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => updatePayoutStatus(account, 'rejected')}
+                      disabled={working === `payout-${account.id}-rejected`}
+                    >
+                      Reject
+                    </Button>
+                  </div>
+                ) : (
+                  <p className="mt-4 text-xs text-muted-foreground">
+                    Reviewed {formatDate(payout.approvedAt ?? payout.rejectedAt)}
+                    {payout.reviewNotes ?? payout.rejectionReason
+                      ? ` - ${payout.reviewNotes ?? payout.rejectionReason}`
+                      : ''}
+                  </p>
+                )}
+              </div>
+            )
+          })}
+          {!payoutAccounts.length ? (
+            <div className="rounded-xl border border-dashed border-border p-6 text-sm text-muted-foreground">
+              No payout details have been submitted yet. Vendors will appear here after joining the
+              reward program with bank account and UPI details.
+            </div>
+          ) : null}
+        </CardContent>
+      </Card>
 
       <section className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
         <Card className="border-border/70 bg-card/85">
@@ -915,7 +1142,7 @@ export function ReferralProgramPanel({ initialData }: { initialData: ReferralPro
             <Input
               type="number"
               min={1}
-              placeholder="Blank means every verified subscription payment can reward"
+              placeholder="Blank uses global bonus frequency"
               value={ruleForm.maxRewardsPerReferee}
               onChange={(event) =>
                 setRuleForm((current) => ({
@@ -990,6 +1217,7 @@ export function ReferralProgramPanel({ initialData }: { initialData: ReferralPro
           </Button>
         </div>
       </ModalSheet>
+      {actionModal.modal}
     </div>
   )
 }
