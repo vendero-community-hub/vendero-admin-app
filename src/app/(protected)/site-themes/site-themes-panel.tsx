@@ -434,6 +434,93 @@ type SeoOverview = {
   fallbackInstructions: { manual: string; dns: string };
 };
 
+type AiSeoGenerationScope = "all" | "pages" | "routes";
+type AiSeoWorkingAction = "load" | "generate" | "approve";
+
+type AiSeoGenerationResult = {
+  pageDataId: number;
+  pageDataPublicId?: string | null;
+  pageKey: string;
+  path: string;
+  routeKey?: string | null;
+  scope?: string | null;
+  mode: "ai" | "fallback" | string;
+  warnings: string[];
+  provider?: string | null;
+};
+
+type AiSeoGenerationFailure = {
+  pageKey: string;
+  path: string;
+  routeKey?: string | null;
+  errorCode?: string | null;
+  message: string;
+};
+
+type AiSeoJob = {
+  id: number;
+  publicId: string;
+  status: string;
+  jobType: string;
+  inputJson: Record<string, unknown>;
+  resultJson: {
+    generationMode?: string | null;
+    results?: AiSeoGenerationResult[];
+    failures?: AiSeoGenerationFailure[];
+    pageDataIds?: number[];
+  };
+  errorCode?: string | null;
+  errorMessage?: string | null;
+  startedAt?: string | null;
+  completedAt?: string | null;
+};
+
+type AiSeoPageData = {
+  id: number;
+  publicId: string;
+  pageKey: string;
+  routePattern?: string | null;
+  title?: string | null;
+  metaDescription?: string | null;
+  seoJson: Record<string, unknown>;
+  contentJson: Record<string, unknown>;
+  schemaJson: Record<string, unknown>;
+  suggestionsJson: Record<string, unknown>;
+  scoreJson: Record<string, unknown>;
+  status: string;
+  generatedBy?: string | null;
+  seoIntakeStatus?: string | null;
+  seoAuditScore?: number | null;
+  metadata: Record<string, unknown>;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+};
+
+type AiSeoOverview = {
+  site?: Record<string, unknown> | null;
+  profile?: Record<string, unknown> | null;
+  jobs: AiSeoJob[];
+  drafts: AiSeoPageData[];
+  approved: AiSeoPageData[];
+  counts: Record<string, number>;
+};
+
+type AiSeoGenerateResponse = {
+  job: AiSeoJob;
+  profile?: Record<string, unknown> | null;
+  results: AiSeoGenerationResult[];
+  failures: AiSeoGenerationFailure[];
+  drafts: AiSeoPageData[];
+  overview: AiSeoOverview;
+};
+
+type AiSeoApproveResponse = {
+  job: AiSeoJob;
+  approved: AiSeoPageData[];
+  archivedCount: number;
+  overview: AiSeoOverview;
+};
+
 type RuntimeBookingRow = {
   id: number;
   publicId: string;
@@ -6246,6 +6333,79 @@ function seoSiteRows(data: NonNullable<SiteThemesData>, analytics: SiteAnalytics
   }));
 }
 
+function aiSeoSiteRows(
+  data: NonNullable<SiteThemesData>,
+  analytics: SiteAnalytics,
+): SeoSiteRow[] {
+  const vendorSites = data.vendorSites ?? [];
+  if (vendorSites.length) {
+    return vendorSites.map((site) => ({
+      id: site.id,
+      label: site.siteName || site.vendorName || `Vendor site #${site.id}`,
+      vendor: site.vendorName || `Vendor #${site.vendorProfileId}`,
+      theme: site.themeName || site.themeSlug || "Theme",
+      domain:
+        site.canonicalUrl ||
+        site.primaryHostname ||
+        site.subdomain ||
+        site.domain ||
+        "",
+      status: site.status,
+      paymentStatus: site.paymentStatus,
+    }));
+  }
+
+  return analytics.siteRows.map((site) => ({
+    id: site.id,
+    label: site.vendor,
+    vendor: site.vendor,
+    theme: site.theme,
+    domain: site.domain,
+    status: site.status,
+    paymentStatus: site.paymentStatus,
+  }));
+}
+
+function aiSeoPagePath(row: AiSeoPageData) {
+  const seo = recordFromUnknown(row.seoJson);
+  const explicitPath = stringFromUnknown(
+    row.routePattern ?? seo.path ?? seo.canonicalPath,
+  ).trim();
+  if (explicitPath) return explicitPath;
+  if (row.pageKey === "home") return "/";
+  return `/${row.pageKey.replace(/^\/+/, "")}`;
+}
+
+function aiSeoGenerationForRow(
+  overview: AiSeoOverview,
+  row: AiSeoPageData,
+): AiSeoGenerationResult | undefined {
+  return [...overview.jobs]
+    .sort((left, right) => right.id - left.id)
+    .flatMap((job) => job.resultJson?.results ?? [])
+    .find(
+      (result) =>
+        result.pageDataId === row.id ||
+        (result.pageDataPublicId && result.pageDataPublicId === row.publicId),
+    );
+}
+
+function latestAiSeoDraftJob(overview: AiSeoOverview) {
+  const draftIds = new Set(overview.drafts.map((row) => row.id));
+  return [...overview.jobs]
+    .sort((left, right) => right.id - left.id)
+    .find((job) =>
+      (job.resultJson?.pageDataIds ?? []).some((id) => draftIds.has(Number(id))),
+    );
+}
+
+function latestAiSeoFailures(overview: AiSeoOverview) {
+  return [...overview.jobs]
+    .sort((left, right) => right.id - left.id)
+    .find((job) => (job.resultJson?.failures?.length ?? 0) > 0)?.resultJson
+    ?.failures ?? [];
+}
+
 function MetricCard({
   label,
   value,
@@ -7446,61 +7606,339 @@ function VendorSiteEditorPanel({
   );
 }
 
-function AiSeoGeneratorPanel({ themes }: { themes: SiteTheme[] }) {
-  const rows = themes.map((theme) => ({
-    id: theme.id,
-    name: theme.name,
-    slug: theme.slug,
-    status: themeHasSeo(theme) ? "ready" : "needs_setup",
-  }));
+function AiSeoGeneratorPanel({
+  rows,
+  overviews,
+  working,
+  onLoad,
+  onGenerate,
+  onApprove,
+}: {
+  rows: SeoSiteRow[];
+  overviews: Record<number, AiSeoOverview | undefined>;
+  working: Record<number, AiSeoWorkingAction | undefined>;
+  onLoad: (site: SeoSiteRow) => void;
+  onGenerate: (site: SeoSiteRow, scope: AiSeoGenerationScope) => void;
+  onApprove: (site: SeoSiteRow) => void;
+}) {
   return (
     <WorkspacePanel
       title="AI SEO Generator"
-      description="Generate route, service, FAQ, schema, and AI search-ready content per theme/vendor site."
+      description="Generate, review, and explicitly approve vendor-specific page and route SEO content."
       icon={Sparkles}
     >
       <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
-        AI SEO is paid/admin-managed. Vendor answers and admin approval should
-        be collected before publishing public SEO pages.
+        Generation only creates review drafts. Public metadata stays unchanged
+        until an admin uses the separate Approve &amp; publish action.
       </div>
-      <div className="mt-4 overflow-x-auto">
-        {rows.length ? (
-          <table className="w-full min-w-[640px] text-sm">
-            <thead className="text-left text-xs uppercase text-muted-foreground">
-              <tr>
-                <th className="py-2 pr-3">Theme</th>
-                <th className="py-2 pr-3">Slug</th>
-                <th className="py-2 pr-3">SEO state</th>
-                <th className="py-2 pr-3">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={row.id} className="border-t border-border/70">
-                  <td className="py-3 pr-3 font-semibold">{row.name}</td>
-                  <td className="py-3 pr-3 font-mono text-xs">{row.slug}</td>
-                  <td className="py-3 pr-3">
-                    <Badge
-                      variant={row.status === "ready" ? "success" : "warning"}
+      {rows.length ? (
+        <div className="mt-4 grid gap-4">
+          {rows.map((site) => {
+            const overview = overviews[site.id];
+            const workingAction = working[site.id];
+            const draftJob = overview ? latestAiSeoDraftJob(overview) : undefined;
+            const failures = overview ? latestAiSeoFailures(overview) : [];
+            const statusLabel = workingAction
+              ? workingAction === "load"
+                ? "Loading"
+                : workingAction === "generate"
+                  ? "Generating drafts"
+                  : "Publishing"
+              : overview?.drafts.length
+                ? "Review required"
+                : overview?.approved.length
+                  ? "Published"
+                  : overview
+                    ? "Ready to generate"
+                    : "Status not loaded";
+
+            return (
+              <div
+                key={site.id}
+                className="rounded-xl border border-border/70 bg-background/30 p-4"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="font-semibold">{site.label}</p>
+                      <Badge
+                        variant={site.status === "active" ? "success" : "warning"}
+                      >
+                        Site {formatLabel(site.status)}
+                      </Badge>
+                      <Badge
+                        variant={
+                          overview?.drafts.length
+                            ? "warning"
+                            : overview?.approved.length
+                              ? "success"
+                              : "secondary"
+                        }
+                      >
+                        {statusLabel}
+                      </Badge>
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {site.vendor} · {site.theme}
+                    </p>
+                    {site.domain ? (
+                      <p className="mt-1 font-mono text-xs text-muted-foreground">
+                        {originForSeoSite(site)}
+                      </p>
+                    ) : null}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      type="button"
+                      disabled={Boolean(workingAction)}
+                      onClick={() => onLoad(site)}
                     >
-                      {formatLabel(row.status)}
-                    </Badge>
-                  </td>
-                  <td className="py-3 pr-3">
-                    <Button asChild size="sm" variant="outline">
-                      <Link href={`/site-themes/${row.slug}/details`}>
-                        SEO intake
-                      </Link>
+                      <RotateCcw
+                        className={`mr-2 h-4 w-4 ${
+                          workingAction === "load" ? "animate-spin" : ""
+                        }`}
+                      />
+                      {overview ? "Refresh status" : "Load status"}
                     </Button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        ) : (
-          <TableEmpty label="Create a theme before generating SEO content." />
-        )}
-      </div>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      type="button"
+                      disabled={Boolean(workingAction)}
+                      onClick={() => onGenerate(site, "all")}
+                    >
+                      <Sparkles
+                        className={`mr-2 h-4 w-4 ${
+                          workingAction === "generate" ? "animate-pulse" : ""
+                        }`}
+                      />
+                      Generate all SEO
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      type="button"
+                      disabled={Boolean(workingAction)}
+                      onClick={() => onGenerate(site, "pages")}
+                    >
+                      Page drafts
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      type="button"
+                      disabled={Boolean(workingAction)}
+                      onClick={() => onGenerate(site, "routes")}
+                    >
+                      Route drafts
+                    </Button>
+                    <Button
+                      size="sm"
+                      type="button"
+                      disabled={
+                        Boolean(workingAction) ||
+                        !overview?.drafts.length ||
+                        !draftJob
+                      }
+                      onClick={() => onApprove(site)}
+                    >
+                      <ShieldCheck className="mr-2 h-4 w-4" />
+                      Approve &amp; publish
+                    </Button>
+                  </div>
+                </div>
+
+                {overview ? (
+                  <>
+                    <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                      <div className="rounded-lg border border-border/70 bg-card/60 p-3">
+                        <p className="text-xs font-semibold uppercase text-muted-foreground">
+                          Drafts to review
+                        </p>
+                        <p className="mt-1 text-xl font-semibold">
+                          {formatCount(overview.drafts.length)}
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-border/70 bg-card/60 p-3">
+                        <p className="text-xs font-semibold uppercase text-muted-foreground">
+                          Approved pages
+                        </p>
+                        <p className="mt-1 text-xl font-semibold">
+                          {formatCount(overview.approved.length)}
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-border/70 bg-card/60 p-3">
+                        <p className="text-xs font-semibold uppercase text-muted-foreground">
+                          Latest generation
+                        </p>
+                        <p className="mt-1 text-sm font-semibold">
+                          {draftJob
+                            ? formatLabel(
+                                draftJob.resultJson?.generationMode ||
+                                  draftJob.status,
+                              )
+                            : "Not generated"}
+                        </p>
+                      </div>
+                    </div>
+
+                    {overview.drafts.length ? (
+                      <div className="mt-4 overflow-x-auto">
+                        <table className="w-full min-w-[920px] text-sm">
+                          <thead className="text-left text-xs uppercase text-muted-foreground">
+                            <tr>
+                              <th className="py-2 pr-3">Page / path</th>
+                              <th className="py-2 pr-3">Meta title &amp; description</th>
+                              <th className="py-2 pr-3">Generation</th>
+                              <th className="py-2 pr-3">State</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {overview.drafts.map((row) => {
+                              const generation = aiSeoGenerationForRow(
+                                overview,
+                                row,
+                              );
+                              const seo = recordFromUnknown(row.seoJson);
+                              const title =
+                                row.title ||
+                                stringFromUnknown(seo.metaTitle ?? seo.title) ||
+                                "Title pending";
+                              const description =
+                                row.metaDescription ||
+                                stringFromUnknown(
+                                  seo.metaDescription ?? seo.description,
+                                ) ||
+                                "Description pending";
+                              const metadata = recordFromUnknown(row.metadata);
+                              const metadataWarnings = Array.isArray(
+                                metadata.warnings,
+                              )
+                                ? metadata.warnings.filter(
+                                    (warning): warning is string =>
+                                      typeof warning === "string" &&
+                                      Boolean(warning.trim()),
+                                  )
+                                : [];
+                              const warnings =
+                                generation?.warnings?.length
+                                  ? generation.warnings
+                                  : metadataWarnings;
+                              const mode =
+                                generation?.mode ||
+                                stringFromUnknown(
+                                  metadata.mode ?? metadata.generationMode,
+                                ) ||
+                                "generated";
+                              const provider =
+                                generation?.provider ||
+                                stringFromUnknown(metadata.provider);
+
+                              return (
+                                <tr
+                                  key={row.id}
+                                  className="border-t border-border/70 align-top"
+                                >
+                                  <td className="py-3 pr-3">
+                                    <p className="font-semibold">
+                                      {formatLabel(row.pageKey)}
+                                    </p>
+                                    <p className="mt-1 font-mono text-xs text-muted-foreground">
+                                      {aiSeoPagePath(row)}
+                                    </p>
+                                  </td>
+                                  <td className="max-w-xl py-3 pr-3">
+                                    <p className="font-semibold">{title}</p>
+                                    <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                                      {description}
+                                    </p>
+                                  </td>
+                                  <td className="py-3 pr-3">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <Badge
+                                        variant={
+                                          mode === "ai"
+                                            ? "success"
+                                            : mode === "fallback"
+                                              ? "warning"
+                                              : "secondary"
+                                        }
+                                      >
+                                        {formatLabel(mode)}
+                                      </Badge>
+                                      {provider ? (
+                                        <span className="text-xs text-muted-foreground">
+                                          {provider}
+                                        </span>
+                                      ) : null}
+                                    </div>
+                                    {warnings.length ? (
+                                      <div className="mt-2 space-y-1 text-xs text-amber-300">
+                                        {warnings.map((warning, index) => (
+                                          <p key={`${row.id}-warning-${index}`}>
+                                            {warning}
+                                          </p>
+                                        ))}
+                                      </div>
+                                    ) : (
+                                      <p className="mt-2 text-xs text-muted-foreground">
+                                        No generation warnings
+                                      </p>
+                                    )}
+                                  </td>
+                                  <td className="py-3 pr-3">
+                                    <Badge variant="warning">
+                                      {formatLabel(row.status || "draft")}
+                                    </Badge>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <div className="mt-4 rounded-lg border border-border/70 bg-card/40 px-4 py-3 text-sm text-muted-foreground">
+                        {overview.approved.length
+                          ? "No drafts are waiting for review. Approved SEO remains published."
+                          : "No SEO drafts yet. Generate all pages, only static pages, or route pages above."}
+                      </div>
+                    )}
+
+                    {failures.length ? (
+                      <div className="mt-4 rounded-lg border border-rose-500/20 bg-rose-500/10 p-3 text-sm text-rose-200">
+                        <p className="font-semibold">Latest generation issues</p>
+                        <div className="mt-2 space-y-1 text-xs">
+                          {failures.map((failure, index) => (
+                            <p key={`${failure.pageKey}-${failure.path}-${index}`}>
+                              <span className="font-mono">
+                                {failure.path || failure.pageKey}
+                              </span>
+                              {`: ${failure.message}`}
+                            </p>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                  </>
+                ) : (
+                  <div className="mt-4 rounded-lg border border-border/70 bg-card/40 px-4 py-3 text-sm text-muted-foreground">
+                    {workingAction === "load"
+                      ? "Loading the latest draft and approval status…"
+                      : "Load status to review existing drafts and approved SEO for this vendor site."}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="mt-4">
+          <TableEmpty label="Provision a vendor site before generating SEO content." />
+        </div>
+      )}
     </WorkspacePanel>
   );
 }
@@ -8700,6 +9138,13 @@ export function SiteThemesPanel({
   const [activeTab, setActiveTab] = useState<SiteDashboardTab>("analytics");
   const [message, setMessage] = useState("");
   const [seoOverviews, setSeoOverviews] = useState<Record<number, SeoOverview | undefined>>({});
+  const [aiSeoOverviews, setAiSeoOverviews] = useState<
+    Record<number, AiSeoOverview | undefined>
+  >({});
+  const [aiSeoWorking, setAiSeoWorking] = useState<
+    Record<number, AiSeoWorkingAction | undefined>
+  >({});
+  const autoLoadedAiSeoSites = useRef(new Set<number>());
   const [searchConsoleTokens, setSearchConsoleTokens] = useState<Record<number, string>>({});
   const [runtimeBookings, setRuntimeBookings] = useState<RuntimeBookingOverview | null>(null);
   const [recoveryOverviews, setRecoveryOverviews] = useState<Record<number, RuntimeRecoveryOverview | undefined>>({});
@@ -8722,6 +9167,45 @@ export function SiteThemesPanel({
   );
   const analytics = useMemo(() => data.analytics ?? buildSiteAnalytics(data), [data]);
   const activeSeoRows = useMemo(() => seoSiteRows(data, analytics), [data, analytics]);
+  const editableAiSeoRows = useMemo(
+    () => aiSeoSiteRows(data, analytics),
+    [data, analytics],
+  );
+
+  useEffect(() => {
+    if (activeTab !== "ai-seo") return;
+
+    editableAiSeoRows.forEach((site) => {
+      if (autoLoadedAiSeoSites.current.has(site.id)) return;
+      autoLoadedAiSeoSites.current.add(site.id);
+      setAiSeoWorking((current) => ({ ...current, [site.id]: "load" }));
+      void requestJson(
+        `/api/v1/admin/vendero-sites/vendor-sites/${site.id}/ai-seo`,
+      )
+        .then((overview) => {
+          setAiSeoOverviews((current) => ({
+            ...current,
+            [site.id]: overview as AiSeoOverview,
+          }));
+        })
+        .catch((error) => {
+          setMessage(
+            error instanceof Error
+              ? error.message
+              : `Unable to load AI SEO status for ${site.label}`,
+          );
+        })
+        .finally(() => {
+          setAiSeoWorking((current) => {
+            if (current[site.id] !== "load") return current;
+            const next = { ...current };
+            delete next[site.id];
+            return next;
+          });
+        });
+    });
+  }, [activeTab, editableAiSeoRows]);
+
   const productionOps = data.productionOps;
   const counts: Record<SiteDashboardTab, number> = {
     analytics: data.summary.activeAssignmentCount,
@@ -8734,7 +9218,7 @@ export function SiteThemesPanel({
     "business-runtime": runtimeBookings?.summary.total ?? activeSeoRows.length,
     "booking-recovery": activeSeoRows.length,
     "runtime-rules": activeSeoRows.length,
-    "ai-seo": sortedThemes.filter((theme) => themeHasSeo(theme)).length,
+    "ai-seo": editableAiSeoRows.length,
     "seo-auditor": analytics.siteRows.length,
     "seo-export": activeSeoRows.length,
     "search-console": activeSeoRows.length,
@@ -8816,6 +9300,139 @@ export function SiteThemesPanel({
       setMessage(`${theme.name} publish snapshot created.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to publish theme");
+    }
+  }
+
+  async function loadAiSeoOverview(site: SeoSiteRow) {
+    setMessage("");
+    setAiSeoWorking((current) => ({ ...current, [site.id]: "load" }));
+    try {
+      const overview = (await requestJson(
+        `/api/v1/admin/vendero-sites/vendor-sites/${site.id}/ai-seo`,
+      )) as AiSeoOverview;
+      setAiSeoOverviews((current) => ({
+        ...current,
+        [site.id]: overview,
+      }));
+      setMessage(`${site.label} AI SEO status loaded.`);
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Unable to load AI SEO status",
+      );
+    } finally {
+      setAiSeoWorking((current) => {
+        if (current[site.id] !== "load") return current;
+        const next = { ...current };
+        delete next[site.id];
+        return next;
+      });
+    }
+  }
+
+  async function generateAiSeoDrafts(
+    site: SeoSiteRow,
+    scope: AiSeoGenerationScope,
+  ) {
+    setMessage("");
+    setAiSeoWorking((current) => ({ ...current, [site.id]: "generate" }));
+    try {
+      const result = (await requestJson(
+        `/api/v1/admin/vendero-sites/vendor-sites/${site.id}/ai-seo/generate`,
+        {
+          scope,
+          includeRoutes: scope !== "pages",
+        },
+        "POST",
+      )) as AiSeoGenerateResponse;
+      setAiSeoOverviews((current) => ({
+        ...current,
+        [site.id]: result.overview,
+      }));
+      const fallbackCount = (result.results ?? []).filter(
+        (row) => row.mode === "fallback",
+      ).length;
+      const failureCount = result.failures?.length ?? 0;
+      const resultSummary = [
+        `${formatCount(result.results?.length ?? 0)} review draft(s) created`,
+        fallbackCount ? `${formatCount(fallbackCount)} fallback` : "",
+        failureCount ? `${formatCount(failureCount)} failed` : "",
+      ]
+        .filter(Boolean)
+        .join(", ");
+      setMessage(
+        `${site.label}: ${resultSummary}. Review the metadata, then approve it separately.`,
+      );
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Unable to generate AI SEO drafts",
+      );
+    } finally {
+      setAiSeoWorking((current) => {
+        if (current[site.id] !== "generate") return current;
+        const next = { ...current };
+        delete next[site.id];
+        return next;
+      });
+    }
+  }
+
+  async function approveAiSeoDrafts(site: SeoSiteRow) {
+    const overview = aiSeoOverviews[site.id];
+    const job = overview ? latestAiSeoDraftJob(overview) : undefined;
+    if (!overview || !job) {
+      setMessage(
+        `Load ${site.label} status and generate drafts before approval.`,
+      );
+      return;
+    }
+
+    const draftIds = new Set(overview.drafts.map((row) => row.id));
+    const jobDraftCount = (job.resultJson?.pageDataIds ?? []).filter((id) =>
+      draftIds.has(Number(id)),
+    ).length;
+    const confirmed = await actionModal.confirm({
+      title: `Approve & publish SEO for ${site.label}`,
+      description: `${formatCount(jobDraftCount)} draft row(s) from generation job #${job.id} will become public SEO. Any previously approved row for the same page and route will be archived.`,
+      confirmLabel: "Approve & publish",
+    });
+    if (!confirmed) return;
+
+    setMessage("");
+    setAiSeoWorking((current) => ({ ...current, [site.id]: "approve" }));
+    try {
+      const result = (await requestJson(
+        `/api/v1/admin/vendero-sites/vendor-sites/${site.id}/ai-seo/approve`,
+        { jobId: job.id },
+        "POST",
+      )) as AiSeoApproveResponse;
+      setAiSeoOverviews((current) => ({
+        ...current,
+        [site.id]: result.overview,
+      }));
+      setMessage(
+        `${site.label}: ${formatCount(result.approved?.length ?? 0)} SEO row(s) approved and published${
+          result.archivedCount
+            ? `; ${formatCount(result.archivedCount)} older row(s) archived`
+            : ""
+        }.`,
+      );
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Unable to approve AI SEO drafts",
+      );
+    } finally {
+      setAiSeoWorking((current) => {
+        if (current[site.id] !== "approve") return current;
+        const next = { ...current };
+        delete next[site.id];
+        return next;
+      });
     }
   }
 
@@ -9153,7 +9770,14 @@ export function SiteThemesPanel({
           onSaveRazorpay={saveRazorpayConfig}
         />
       ) : activeTab === "ai-seo" ? (
-        <AiSeoGeneratorPanel themes={sortedThemes} />
+        <AiSeoGeneratorPanel
+          rows={editableAiSeoRows}
+          overviews={aiSeoOverviews}
+          working={aiSeoWorking}
+          onLoad={loadAiSeoOverview}
+          onGenerate={generateAiSeoDrafts}
+          onApprove={approveAiSeoDrafts}
+        />
       ) : activeTab === "seo-auditor" ? (
         <SeoAuditorPanel analytics={analytics} />
       ) : activeTab === "seo-export" ? (

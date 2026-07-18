@@ -2,6 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  ArrowLeft,
+  Check,
+  CheckCheck,
   CheckCircle2,
   Clock3,
   File,
@@ -34,14 +37,16 @@ import {
 import { Input } from "@/components/ui/input";
 import { useActionModal } from "@/components/ui/action-modal";
 import { APP_ENV, socketIoEndpoint } from "@/lib/environment";
+import {
+  buildWhatsAppMessageMap,
+  whatsappDeliveryStatus,
+  whatsappMessagePreview,
+  WhatsAppMessageBubble,
+  type PlatformMessage,
+} from "./whatsapp-message";
 
 type BadgeTone =
-  | "default"
-  | "secondary"
-  | "outline"
-  | "success"
-  | "warning"
-  | "danger";
+  "default" | "secondary" | "outline" | "success" | "warning" | "danger";
 
 type VendorSummary = {
   id: number;
@@ -110,7 +115,7 @@ type WhatsappLog = {
   vendor: VendorSummary;
 };
 
-type PlatformConversation = {
+export type PlatformConversation = {
   id: number;
   publicId: string;
   waId: string;
@@ -126,28 +131,10 @@ type PlatformConversation = {
   expiresAt: string | null;
   isSessionOpen: boolean;
   unreadCount: number;
-};
-
-type PlatformMessage = {
-  id: number;
-  publicId: string;
-  conversationId: number;
-  direction: "inbound" | "outbound";
-  messageType: string;
-  textBody: string | null;
-  providerMessageId: string | null;
-  providerStatus: string;
-  payload: Record<string, unknown>;
-  media: Record<string, unknown>;
-  location: Record<string, unknown>;
-  contacts: Array<Record<string, unknown>>;
-  receivedAt: string | null;
-  sentAt: string | null;
-  deliveredAt: string | null;
-  readAt: string | null;
-  failedAt: string | null;
-  createdAt: string | null;
-  failureReason: string | null;
+  lastMessagePreview?: string | null;
+  lastMessageType?: string | null;
+  lastMessageDirection?: "inbound" | "outbound" | null;
+  lastMessageStatus?: string | null;
 };
 
 export type WhatsappAdminData = {
@@ -208,7 +195,7 @@ function getAdminToken() {
 async function requestJson(
   path: string,
   body?: Record<string, unknown>,
-  method = "GET"
+  method = "GET",
 ) {
   const token = getAdminToken();
   const response = await fetch(path, {
@@ -222,7 +209,7 @@ async function requestJson(
   const payload = await response.json().catch(() => ({}));
   if (!response.ok)
     throw new Error(
-      payload?.message ?? payload?.error?.message ?? "Request failed"
+      payload?.message ?? payload?.error?.message ?? "Request failed",
     );
   return unwrapPayload(payload);
 }
@@ -248,16 +235,116 @@ function formatChatTime(value: string | null | undefined) {
   }).format(date);
 }
 
+function formatConversationTime(value: string | null | undefined) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const today = new Date();
+  const dayStart = new Date(
+    date.getFullYear(),
+    date.getMonth(),
+    date.getDate(),
+  ).getTime();
+  const todayStart = new Date(
+    today.getFullYear(),
+    today.getMonth(),
+    today.getDate(),
+  ).getTime();
+  const dayDifference = Math.round((todayStart - dayStart) / 86_400_000);
+  if (dayDifference === 0) return formatChatTime(value);
+  if (dayDifference === 1) return "Yesterday";
+  if (dayDifference > 1 && dayDifference < 7) {
+    return new Intl.DateTimeFormat("en-IN", { weekday: "short" }).format(date);
+  }
+  return new Intl.DateTimeFormat("en-IN", {
+    day: "2-digit",
+    month: "short",
+  }).format(date);
+}
+
+function messageDateKey(message: PlatformMessage) {
+  const value = message.receivedAt ?? message.sentAt ?? message.createdAt;
+  if (!value) return "unknown";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "unknown";
+  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+}
+
+function formatMessageDay(message: PlatformMessage) {
+  const value = message.receivedAt ?? message.sentAt ?? message.createdAt;
+  if (!value) return "Messages";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Messages";
+  const today = new Date();
+  const dateStart = new Date(
+    date.getFullYear(),
+    date.getMonth(),
+    date.getDate(),
+  ).getTime();
+  const todayStart = new Date(
+    today.getFullYear(),
+    today.getMonth(),
+    today.getDate(),
+  ).getTime();
+  const difference = Math.round((todayStart - dateStart) / 86_400_000);
+  if (difference === 0) return "Today";
+  if (difference === 1) return "Yesterday";
+  return new Intl.DateTimeFormat("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: date.getFullYear() === today.getFullYear() ? undefined : "numeric",
+  }).format(date);
+}
+
+function ConversationPreviewIcon({
+  type,
+  direction,
+  status,
+}: {
+  type?: string | null;
+  direction?: "inbound" | "outbound" | null;
+  status?: string | null;
+}) {
+  if (direction === "outbound") {
+    if (status === "read") {
+      return <CheckCheck className="h-3.5 w-3.5 shrink-0 text-[#53bdeb]" />;
+    }
+    if (status === "delivered") {
+      return <CheckCheck className="h-3.5 w-3.5 shrink-0 text-slate-400" />;
+    }
+    if (["queued", "pending"].includes(String(status))) {
+      return <Clock3 className="h-3.5 w-3.5 shrink-0 text-slate-400" />;
+    }
+    return <Check className="h-3.5 w-3.5 shrink-0 text-slate-400" />;
+  }
+  if (type === "image" || type === "sticker") {
+    return <ImageIcon className="h-3.5 w-3.5 shrink-0 text-slate-400" />;
+  }
+  if (type === "video") {
+    return <Video className="h-3.5 w-3.5 shrink-0 text-slate-400" />;
+  }
+  if (type === "audio") {
+    return <Mic className="h-3.5 w-3.5 shrink-0 text-slate-400" />;
+  }
+  if (type === "document") {
+    return <File className="h-3.5 w-3.5 shrink-0 text-slate-400" />;
+  }
+  if (type === "location") {
+    return <MapPin className="h-3.5 w-3.5 shrink-0 text-slate-400" />;
+  }
+  return null;
+}
+
 function toneForStatus(status: string | null | undefined): BadgeTone {
   if (
     ["approved", "sent", "delivered", "read", "opted_in"].includes(
-      String(status)
+      String(status),
     )
   )
     return "success";
   if (
     ["failed", "rejected", "disabled", "revoked", "opted_out"].includes(
-      String(status)
+      String(status),
     )
   )
     return "danger";
@@ -300,21 +387,25 @@ function replaceById<T extends { id: number }>(records: T[], next: T) {
 
 export function WhatsappAdminPanel({
   initialData,
+  initialConversations,
+  initialMessages,
 }: {
   initialData: WhatsappAdminData;
+  initialConversations?: PlatformConversation[];
+  initialMessages?: PlatformMessage[];
 }) {
   const [data, setData] = useState<WhatsappAdminData>(initialData);
   const [view, setView] =
     useState<(typeof VIEW_OPTIONS)[number]["key"]>("inbox");
   const [query, setQuery] = useState(initialData?.filters.q ?? "");
   const [templateStatus, setTemplateStatus] = useState(
-    initialData?.filters.templateStatus ?? "all"
+    initialData?.filters.templateStatus ?? "all",
   );
   const [optInStatus, setOptInStatus] = useState(
-    initialData?.filters.optInStatus ?? "all"
+    initialData?.filters.optInStatus ?? "all",
   );
   const [logStatus, setLogStatus] = useState(
-    initialData?.filters.logStatus ?? "all"
+    initialData?.filters.logStatus ?? "all",
   );
   const [templateForm, setTemplateForm] = useState({
     name: "",
@@ -329,12 +420,15 @@ export function WhatsappAdminPanel({
     consentText: "",
   });
   const [conversations, setConversations] = useState<PlatformConversation[]>(
-    []
+    initialConversations ?? [],
   );
-  const [messages, setMessages] = useState<PlatformMessage[]>([]);
+  const [messages, setMessages] = useState<PlatformMessage[]>(
+    initialMessages ?? [],
+  );
+  const [replyingTo, setReplyingTo] = useState<PlatformMessage | null>(null);
   const [selectedConversationId, setSelectedConversationId] = useState<
     number | null
-  >(null);
+  >(initialConversations?.[0]?.id ?? null);
   const [socketState, setSocketState] = useState<
     "idle" | "connecting" | "connected"
   >("idle");
@@ -361,6 +455,11 @@ export function WhatsappAdminPanel({
   const [error, setError] = useState<string | null>(null);
   const actionModal = useActionModal();
   const typingSignalRef = useRef({ conversationId: 0, sentAt: 0 });
+  const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  const messageEndRef = useRef<HTMLDivElement | null>(null);
+  const messageViewportRef = useRef<HTMLDivElement | null>(null);
+  const stickToBottomRef = useRef(true);
+  const messageViewportInteractedRef = useRef(false);
 
   const activeRecords = useMemo(() => {
     if (view === "inbox") return conversations.length;
@@ -373,9 +472,9 @@ export function WhatsappAdminPanel({
   const selectedConversation = useMemo(
     () =>
       conversations.find(
-        (conversation) => conversation.id === selectedConversationId
+        (conversation) => conversation.id === selectedConversationId,
       ) ?? null,
-    [conversations, selectedConversationId]
+    [conversations, selectedConversationId],
   );
 
   const approvedTemplates = useMemo(
@@ -383,16 +482,21 @@ export function WhatsappAdminPanel({
       (data?.templates ?? []).filter((template) =>
         [template.status, template.providerStatus]
           .map((status) => String(status ?? "").toLowerCase())
-          .includes("approved")
+          .includes("approved"),
       ),
-    [data?.templates]
+    [data?.templates],
+  );
+
+  const messageMap = useMemo(
+    () => buildWhatsAppMessageMap(messages),
+    [messages],
   );
 
   async function refreshConversations(selectFirst = false) {
     const params = new URLSearchParams({ limit: "80" });
     if (query.trim()) params.set("q", query.trim());
     const rows = (await requestJson(
-      `/api/v1/admin/whatsapp/platform/conversations?${params.toString()}`
+      `/api/v1/admin/whatsapp/platform/conversations?${params.toString()}`,
     )) as PlatformConversation[];
     setConversations(rows);
     if (selectFirst && rows[0]) {
@@ -402,23 +506,26 @@ export function WhatsappAdminPanel({
   }
 
   async function loadMessages(conversationId: number) {
+    stickToBottomRef.current = true;
+    messageViewportInteractedRef.current = false;
     const payload = (await requestJson(
-      `/api/v1/admin/whatsapp/platform/conversations/${conversationId}/messages?limit=120`
+      `/api/v1/admin/whatsapp/platform/conversations/${conversationId}/messages?limit=120`,
     )) as { conversation: PlatformConversation; messages: PlatformMessage[] };
     setMessages(payload.messages);
+    setReplyingTo(null);
     setSelectedConversationId(conversationId);
     setConversations((current) =>
       current.map((conversation) =>
         conversation.id === payload.conversation.id
           ? payload.conversation
-          : conversation
-      )
+          : conversation,
+      ),
     );
     const inboundNeedsRead = payload.messages.some(
       (message) =>
         message.direction === "inbound" &&
         Boolean(message.providerMessageId) &&
-        deliveryStatus(message) !== "read"
+        whatsappDeliveryStatus(message) !== "read",
     );
     if (payload.conversation.unreadCount > 0 || inboundNeedsRead) {
       void markConversationReadById(conversationId);
@@ -426,15 +533,39 @@ export function WhatsappAdminPanel({
   }
 
   useEffect(() => {
-    void refreshConversations(true).catch((requestError) => {
+    if (initialConversations) return;
+    void refreshConversations(false).catch((requestError) => {
       setError(
         requestError instanceof Error
           ? requestError.message
-          : "Unable to load WhatsApp inbox"
+          : "Unable to load WhatsApp inbox",
       );
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [initialConversations]);
+
+  useEffect(() => {
+    if (stickToBottomRef.current) {
+      requestAnimationFrame(() => {
+        const viewport = messageViewportRef.current;
+        if (viewport) viewport.scrollTop = viewport.scrollHeight;
+      });
+    }
+  }, [messages, selectedConversationId]);
+
+  useEffect(() => {
+    const viewport = messageViewportRef.current;
+    const content = viewport?.firstElementChild;
+    if (!viewport || !content || typeof ResizeObserver === "undefined") return;
+
+    const observer = new ResizeObserver(() => {
+      if (stickToBottomRef.current) {
+        viewport.scrollTop = viewport.scrollHeight;
+      }
+    });
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [selectedConversationId]);
 
   useEffect(() => {
     const token = getAdminToken();
@@ -469,34 +600,46 @@ export function WhatsappAdminPanel({
           message?: PlatformMessage;
         }) => {
           if (payload.conversation) {
+            const previewUpdate =
+              payload.message &&
+              ["message.received", "message.sent", "message.failed"].includes(
+                payload.event ?? "",
+              )
+                ? {
+                    lastMessagePreview: whatsappMessagePreview(payload.message),
+                    lastMessageType: payload.message.messageType,
+                    lastMessageDirection: payload.message.direction,
+                    lastMessageStatus: payload.message.providerStatus,
+                  }
+                : {};
             setConversations((current) => {
               const exists = current.some(
-                (item) => item.id === payload.conversation!.id
+                (item) => item.id === payload.conversation!.id,
               );
               const next = exists
                 ? current.map((item) =>
                     item.id === payload.conversation!.id
-                      ? payload.conversation!
-                      : item
+                      ? { ...item, ...payload.conversation!, ...previewUpdate }
+                      : item,
                   )
-                : [payload.conversation!, ...current];
+                : [{ ...payload.conversation!, ...previewUpdate }, ...current];
               return next.sort(
                 (left, right) =>
                   Date.parse(right.lastMessageAt ?? "") -
-                  Date.parse(left.lastMessageAt ?? "")
+                  Date.parse(left.lastMessageAt ?? ""),
               );
             });
             if (payload.event === "message.received") {
               setLiveNotice(
                 `New WhatsApp message from ${conversationLabel(
-                  payload.conversation
-                )}`
+                  payload.conversation,
+                )}`,
               );
             } else if (payload.event === "message.status_updated") {
               setLiveNotice(
                 `WhatsApp message status updated to ${
                   payload.message?.providerStatus ?? "updated"
-                }`
+                }`,
               );
             }
           }
@@ -506,13 +649,13 @@ export function WhatsappAdminPanel({
           ) {
             setMessages((current) => {
               const exists = current.some(
-                (message) => message.publicId === payload.message!.publicId
+                (message) => message.publicId === payload.message!.publicId,
               );
               return exists
                 ? current.map((message) =>
                     message.publicId === payload.message!.publicId
                       ? payload.message!
-                      : message
+                      : message,
                   )
                 : [...current, payload.message!];
             });
@@ -523,7 +666,7 @@ export function WhatsappAdminPanel({
               void markConversationReadById(selectedConversationId);
             }
           }
-        }
+        },
       );
     });
 
@@ -544,7 +687,7 @@ export function WhatsappAdminPanel({
       if (optInStatus !== "all") params.set("optInStatus", optInStatus);
       if (logStatus !== "all") params.set("logStatus", logStatus);
       const nextData = await requestJson(
-        `/api/v1/admin/whatsapp?${params.toString()}`
+        `/api/v1/admin/whatsapp?${params.toString()}`,
       );
       setData(nextData as WhatsappAdminData);
       setView(nextView);
@@ -552,7 +695,7 @@ export function WhatsappAdminPanel({
       setError(
         requestError instanceof Error
           ? requestError.message
-          : "Unable to refresh WhatsApp admin data"
+          : "Unable to refresh WhatsApp admin data",
       );
     } finally {
       setWorking(null);
@@ -567,12 +710,12 @@ export function WhatsappAdminPanel({
       const template = (await requestJson(
         "/api/v1/admin/whatsapp/templates",
         templateForm,
-        "POST"
+        "POST",
       )) as WhatsappTemplate;
       setData((current) =>
         current
           ? { ...current, templates: [template, ...current.templates] }
-          : current
+          : current,
       );
       setTemplateForm({
         name: "",
@@ -584,7 +727,7 @@ export function WhatsappAdminPanel({
       setError(
         requestError instanceof Error
           ? requestError.message
-          : "Unable to create template"
+          : "Unable to create template",
       );
     } finally {
       setWorking(null);
@@ -593,7 +736,7 @@ export function WhatsappAdminPanel({
 
   async function updateTemplateStatus(
     template: WhatsappTemplate,
-    status: string
+    status: string,
   ) {
     const rejectionReason =
       status === "rejected"
@@ -614,18 +757,18 @@ export function WhatsappAdminPanel({
       const updated = (await requestJson(
         `/api/v1/admin/whatsapp/templates/${template.id}`,
         { status, rejectionReason },
-        "PUT"
+        "PUT",
       )) as WhatsappTemplate;
       setData((current) =>
         current
           ? { ...current, templates: replaceById(current.templates, updated) }
-          : current
+          : current,
       );
     } catch (requestError) {
       setError(
         requestError instanceof Error
           ? requestError.message
-          : "Unable to update template"
+          : "Unable to update template",
       );
     } finally {
       setWorking(null);
@@ -640,7 +783,7 @@ export function WhatsappAdminPanel({
       const optIn = (await requestJson(
         "/api/v1/admin/whatsapp/opt-ins",
         optInForm,
-        "POST"
+        "POST",
       )) as WhatsappOptIn;
       setData((current) => {
         if (!current) return current;
@@ -662,7 +805,7 @@ export function WhatsappAdminPanel({
       setError(
         requestError instanceof Error
           ? requestError.message
-          : "Unable to save opt-in"
+          : "Unable to save opt-in",
       );
     } finally {
       setWorking(null);
@@ -676,18 +819,18 @@ export function WhatsappAdminPanel({
       const updated = (await requestJson(
         `/api/v1/admin/whatsapp/opt-ins/${optIn.id}/status`,
         { status, source: "admin" },
-        "POST"
+        "POST",
       )) as WhatsappOptIn;
       setData((current) =>
         current
           ? { ...current, optIns: replaceById(current.optIns, updated) }
-          : current
+          : current,
       );
     } catch (requestError) {
       setError(
         requestError instanceof Error
           ? requestError.message
-          : "Unable to update opt-in"
+          : "Unable to update opt-in",
       );
     } finally {
       setWorking(null);
@@ -716,6 +859,7 @@ export function WhatsappAdminPanel({
       address: messageForm.address,
       templateName: messageForm.templateName,
       templateLanguage: messageForm.templateLanguage || "en",
+      replyToMessageId: replyingTo?.providerMessageId ?? undefined,
     };
 
     setWorking("send-platform-message");
@@ -725,23 +869,31 @@ export function WhatsappAdminPanel({
         conversation: PlatformConversation;
         message: PlatformMessage;
       };
+      const conversationWithPreview: PlatformConversation = {
+        ...data.conversation,
+        lastMessagePreview: whatsappMessagePreview(data.message),
+        lastMessageType: data.message.messageType,
+        lastMessageDirection: data.message.direction,
+        lastMessageStatus: data.message.providerStatus,
+      };
       setConversations((current) => {
         const exists = current.some(
-          (conversation) => conversation.id === data.conversation.id
+          (conversation) => conversation.id === data.conversation.id,
         );
         return exists
           ? current.map((conversation) =>
               conversation.id === data.conversation.id
-                ? data.conversation
-                : conversation
+                ? conversationWithPreview
+                : conversation,
             )
-          : [data.conversation, ...current];
+          : [conversationWithPreview, ...current];
       });
       setSelectedConversationId(data.conversation.id);
+      setReplyingTo(null);
       setMessages((current) =>
         current.some((message) => message.publicId === data.message.publicId)
           ? current
-          : [...current, data.message]
+          : [...current, data.message],
       );
       setMessageForm((current) => ({
         ...current,
@@ -763,7 +915,7 @@ export function WhatsappAdminPanel({
       setError(
         requestError instanceof Error
           ? requestError.message
-          : "Unable to send WhatsApp message"
+          : "Unable to send WhatsApp message",
       );
     } finally {
       setWorking(null);
@@ -774,10 +926,12 @@ export function WhatsappAdminPanel({
     const conversation = (await requestJson(
       `/api/v1/admin/whatsapp/platform/conversations/${conversationId}/read`,
       {},
-      "POST"
+      "POST",
     )) as PlatformConversation;
     setConversations((current) =>
-      current.map((item) => (item.id === conversation.id ? conversation : item))
+      current.map((item) =>
+        item.id === conversation.id ? conversation : item,
+      ),
     );
   }
 
@@ -797,43 +951,8 @@ export function WhatsappAdminPanel({
     await requestJson(
       `/api/v1/admin/whatsapp/platform/conversations/${conversationId}/typing`,
       {},
-      "POST"
+      "POST",
     );
-  }
-
-  function messageText(message: PlatformMessage) {
-    if (message.textBody) return message.textBody;
-    if (message.messageType === "location") {
-      return `${message.location.name ?? "Location"} ${
-        message.location.latitude ?? ""
-      }, ${message.location.longitude ?? ""}`;
-    }
-    if (
-      ["image", "video", "audio", "document", "sticker"].includes(
-        message.messageType
-      )
-    ) {
-      return message.media.caption
-        ? String(message.media.caption)
-        : `${message.messageType} message`;
-    }
-    return `${message.messageType} message`;
-  }
-
-  function deliveryStatus(message: PlatformMessage) {
-    const status = String(message.providerStatus ?? "").toLowerCase();
-    if (status === "failed" || message.failedAt) return "failed";
-    if (status === "read" || message.readAt) return "read";
-    if (status === "delivered" || message.deliveredAt) return "delivered";
-    if (status === "sent" || message.sentAt) return "sent";
-    return status;
-  }
-
-  function deliveryTick(message: PlatformMessage) {
-    const status = deliveryStatus(message);
-    if (status === "failed") return "!";
-    if (status === "delivered" || status === "read") return "✓✓";
-    return "✓";
   }
 
   function setComposerMode(type: string) {
@@ -856,7 +975,7 @@ export function WhatsappAdminPanel({
   function composerValue() {
     if (
       ["image", "video", "audio", "document", "sticker"].includes(
-        messageForm.type
+        messageForm.type,
       )
     ) {
       return messageForm.caption;
@@ -873,7 +992,7 @@ export function WhatsappAdminPanel({
 
     if (
       ["image", "video", "audio", "document", "sticker"].includes(
-        messageForm.type
+        messageForm.type,
       )
     ) {
       setMessageForm((current) => ({ ...current, caption: value }));
@@ -894,7 +1013,7 @@ export function WhatsappAdminPanel({
     if (messageForm.type === "template") return "Select an approved template";
     if (
       ["image", "video", "audio", "document", "sticker"].includes(
-        messageForm.type
+        messageForm.type,
       )
     ) {
       return "Add a caption";
@@ -907,96 +1026,103 @@ export function WhatsappAdminPanel({
 
   if (view === "inbox") {
     return (
-      <section className="space-y-4">
-        <div className="rounded-lg border border-border/70 bg-card/80 p-3">
-          <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-            <div className="flex flex-wrap gap-2">
-              {VIEW_OPTIONS.map((option) => {
-                const Icon = option.icon;
-                return (
-                  <Button
-                    key={option.key}
-                    variant={view === option.key ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setView(option.key)}
-                  >
-                    <Icon className="h-4 w-4" />
-                    {option.label}
-                  </Button>
-                );
-              })}
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge
-                variant={socketState === "connected" ? "success" : "outline"}
-                className="gap-2 rounded-full px-3 py-1"
-              >
-                <Wifi className="h-3.5 w-3.5" />
-                {socketState === "connected" ? "Live" : "Connecting"}
-              </Badge>
-              <Badge variant="outline" className="rounded-full px-3 py-1">
-                {conversations.length} chats
-              </Badge>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  void refresh();
-                  void refreshConversations(false);
-                }}
-                disabled={working === "refresh"}
-              >
-                <RefreshCw className="h-4 w-4" />
-                Refresh
-              </Button>
-            </div>
+      <section className="flex h-full min-h-0 flex-col overflow-hidden bg-[#0b141a] text-slate-100">
+        <nav className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-white/10 bg-[#111b21] px-2 sm:px-3">
+          <div className="flex min-w-0 items-center gap-1 overflow-x-auto">
+            {VIEW_OPTIONS.map((option) => {
+              const Icon = option.icon;
+              return (
+                <button
+                  key={option.key}
+                  type="button"
+                  onClick={() => setView(option.key)}
+                  className={`inline-flex h-9 shrink-0 items-center gap-2 rounded-md px-2.5 text-xs font-medium transition sm:px-3 ${
+                    view === option.key
+                      ? "bg-[#00a884] text-[#062e27]"
+                      : "text-slate-300 hover:bg-white/5 hover:text-white"
+                  }`}
+                >
+                  <Icon className="h-4 w-4" />
+                  <span className="hidden sm:inline">{option.label}</span>
+                </button>
+              );
+            })}
           </div>
-          {error ? (
-            <div className="mt-3 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
-              {error}
-            </div>
-          ) : null}
-          {liveNotice ? (
-            <p className="mt-2 text-xs text-muted-foreground">{liveNotice}</p>
-          ) : null}
-        </div>
+          <div className="flex shrink-0 items-center gap-1.5">
+            <span
+              title={liveNotice ?? undefined}
+              className={`hidden items-center gap-1.5 rounded-full px-2 py-1 text-[11px] sm:inline-flex ${
+                socketState === "connected"
+                  ? "bg-emerald-500/10 text-emerald-300"
+                  : "bg-white/5 text-slate-400"
+              }`}
+            >
+              <Wifi className="h-3.5 w-3.5" />
+              {socketState === "connected" ? "Live" : "Connecting"}
+            </span>
+            <button
+              type="button"
+              title="Refresh WhatsApp inbox"
+              onClick={() => {
+                void refresh();
+                void refreshConversations(false);
+              }}
+              disabled={working === "refresh"}
+              className="flex h-9 w-9 items-center justify-center rounded-full text-slate-300 transition hover:bg-white/5 hover:text-white disabled:opacity-50"
+            >
+              <RefreshCw
+                className={`h-4 w-4 ${
+                  working === "refresh" ? "animate-spin" : ""
+                }`}
+              />
+            </button>
+          </div>
+        </nav>
 
-        <div className="grid min-h-[720px] overflow-hidden rounded-lg border border-border/70 bg-[#0b141a] shadow-2xl lg:grid-cols-[360px_1fr]">
-          <aside className="flex min-h-[720px] flex-col border-r border-border/70 bg-[#111b21]">
-            <div className="border-b border-white/10 p-4">
-              <div className="flex items-center justify-between gap-3">
+        {error ? (
+          <div className="shrink-0 border-b border-rose-400/20 bg-rose-500/10 px-4 py-2 text-sm text-rose-100">
+            {error}
+          </div>
+        ) : null}
+
+        <div className="grid min-h-0 flex-1 overflow-hidden md:grid-cols-[minmax(320px,380px)_minmax(0,1fr)]">
+          <aside
+            className={`${
+              selectedConversation ? "hidden md:flex" : "flex"
+            } min-h-0 flex-col border-r border-white/10 bg-[#111b21]`}
+          >
+            <div className="shrink-0 border-b border-white/10 px-3 pb-3 pt-3">
+              <div className="flex items-center justify-between gap-3 px-1">
                 <div>
-                  <p className="text-xs uppercase tracking-[0.2em] text-emerald-300">
-                    WhatsApp Inbox
+                  <h2 className="text-xl font-semibold text-white">Chats</h2>
+                  <p className="mt-0.5 text-xs text-slate-400">
+                    {conversations.length} platform conversations
                   </p>
-                  <h2 className="mt-1 text-xl font-semibold text-white">
-                    Chats
-                  </h2>
                 </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
+                <button
+                  type="button"
                   title="Refresh conversations"
                   onClick={() => void refreshConversations(false)}
+                  className="flex h-9 w-9 items-center justify-center rounded-full text-slate-300 transition hover:bg-white/5 hover:text-white"
                 >
-                  <RefreshCw className="h-4 w-4 text-slate-200" />
-                </Button>
+                  <RefreshCw className="h-4 w-4" />
+                </button>
               </div>
-              <div className="relative mt-4">
+              <div className="relative mt-3">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                 <Input
-                  className="border-white/10 bg-[#202c33] pl-9 text-slate-100 placeholder:text-slate-400"
+                  className="h-10 rounded-lg border-white/10 bg-[#202c33] pl-9 text-slate-100 placeholder:text-slate-400"
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
                   onKeyDown={(event) => {
                     if (event.key === "Enter") void refreshConversations(false);
                   }}
-                  placeholder="Search or start new chat"
+                  placeholder="Search chats"
                 />
               </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto">
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
               {conversations.map((conversation) => {
                 const isSelected = selectedConversationId === conversation.id;
                 return (
@@ -1004,11 +1130,11 @@ export function WhatsappAdminPanel({
                     key={conversation.id}
                     type="button"
                     onClick={() => void loadMessages(conversation.id)}
-                    className={`grid w-full grid-cols-[44px_1fr] gap-3 border-b border-white/5 px-4 py-3 text-left transition ${
+                    className={`grid w-full grid-cols-[48px_minmax(0,1fr)] gap-3 border-b border-white/5 px-3 py-3 text-left transition ${
                       isSelected ? "bg-[#2a3942]" : "hover:bg-[#202c33]"
                     }`}
                   >
-                    <div className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-600 text-sm font-semibold text-white">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-slate-500 to-slate-700 text-sm font-semibold text-white ring-1 ring-white/10">
                       {conversationInitials(conversation)}
                     </div>
                     <div className="min-w-0">
@@ -1016,16 +1142,30 @@ export function WhatsappAdminPanel({
                         <p className="truncate text-sm font-semibold text-slate-50">
                           {conversationLabel(conversation)}
                         </p>
-                        <span className="shrink-0 text-[11px] text-slate-400">
-                          {formatChatTime(conversation.lastMessageAt)}
+                        <span
+                          className={`shrink-0 text-[11px] ${
+                            conversation.unreadCount
+                              ? "font-medium text-emerald-300"
+                              : "text-slate-400"
+                          }`}
+                        >
+                          {formatConversationTime(conversation.lastMessageAt)}
                         </span>
                       </div>
                       <div className="mt-1 flex items-center justify-between gap-3">
-                        <p className="truncate text-xs text-slate-400">
-                          {conversation.isSessionOpen
-                            ? "24h reply window open"
-                            : "Template required"}
-                        </p>
+                        <div className="flex min-w-0 items-center gap-1.5 text-xs text-slate-400">
+                          <ConversationPreviewIcon
+                            type={conversation.lastMessageType}
+                            direction={conversation.lastMessageDirection}
+                            status={conversation.lastMessageStatus}
+                          />
+                          <p className="truncate">
+                            {conversation.lastMessagePreview ??
+                              (conversation.isSessionOpen
+                                ? "Reply window open"
+                                : "Template required")}
+                          </p>
+                        </div>
                         {conversation.unreadCount ? (
                           <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-emerald-400 px-1.5 text-[11px] font-semibold text-emerald-950">
                             {conversation.unreadCount}
@@ -1044,9 +1184,25 @@ export function WhatsappAdminPanel({
             </div>
           </aside>
 
-          <section className="flex min-h-[720px] flex-col bg-[#0b141a]">
-            <header className="flex min-h-16 items-center justify-between gap-3 border-b border-white/10 bg-[#202c33] px-4 py-3">
+          <section
+            className={`${
+              selectedConversation ? "flex" : "hidden md:flex"
+            } min-h-0 min-w-0 flex-col bg-[#0b141a]`}
+          >
+            <header className="flex min-h-16 shrink-0 items-center justify-between gap-3 border-b border-white/10 bg-[#202c33] px-3 py-2.5 sm:px-4">
               <div className="flex min-w-0 items-center gap-3">
+                <button
+                  type="button"
+                  title="Back to chats"
+                  onClick={() => {
+                    setSelectedConversationId(null);
+                    setMessages([]);
+                    setReplyingTo(null);
+                  }}
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-slate-200 hover:bg-white/5 md:hidden"
+                >
+                  <ArrowLeft className="h-5 w-5" />
+                </button>
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-600 text-sm font-semibold text-white">
                   {selectedConversation ? (
                     conversationInitials(selectedConversation)
@@ -1060,10 +1216,12 @@ export function WhatsappAdminPanel({
                   </h3>
                   <p className="truncate text-xs text-slate-400">
                     {selectedConversation
-                      ? `Session expires ${formatDate(
-                          selectedConversation.expiresAt
-                        )}`
-                      : "Select a chat or enter a phone number below"}
+                      ? selectedConversation.isSessionOpen
+                        ? `Reply window open · expires ${formatConversationTime(
+                            selectedConversation.expiresAt,
+                          )}`
+                        : "Outside the reply window · use a template"
+                      : "Select a chat to open the conversation"}
                   </p>
                 </div>
               </div>
@@ -1073,7 +1231,7 @@ export function WhatsappAdminPanel({
                     variant={
                       selectedConversation.isSessionOpen ? "success" : "warning"
                     }
-                    className="hidden rounded-full px-3 py-1 sm:inline-flex"
+                    className="hidden rounded-full px-3 py-1 lg:inline-flex"
                   >
                     {selectedConversation.isSessionOpen
                       ? "Reply window open"
@@ -1094,93 +1252,107 @@ export function WhatsappAdminPanel({
             </header>
 
             <div
-              className="relative flex-1 overflow-y-auto px-4 py-5"
+              ref={messageViewportRef}
+              onPointerDown={() => {
+                messageViewportInteractedRef.current = true;
+              }}
+              onTouchStart={() => {
+                messageViewportInteractedRef.current = true;
+              }}
+              onWheel={() => {
+                messageViewportInteractedRef.current = true;
+              }}
+              onScroll={(event) => {
+                if (!messageViewportInteractedRef.current) return;
+                const viewport = event.currentTarget;
+                stickToBottomRef.current =
+                  viewport.scrollHeight -
+                    viewport.scrollTop -
+                    viewport.clientHeight <
+                  80;
+              }}
+              className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-4 sm:px-5"
               style={{
                 backgroundColor: "#0b141a",
                 backgroundImage:
-                  "radial-gradient(circle at 18px 18px, rgba(255,255,255,0.055) 1px, transparent 1.5px), radial-gradient(circle at 52px 42px, rgba(255,255,255,0.035) 1px, transparent 1.5px)",
-                backgroundSize: "72px 72px",
+                  "radial-gradient(circle at 18px 18px, rgba(255,255,255,0.045) 1px, transparent 1.5px), radial-gradient(circle at 52px 42px, rgba(255,255,255,0.025) 1px, transparent 1.5px)",
+                backgroundSize: "68px 68px",
               }}
             >
-              <div className="mx-auto flex max-w-4xl flex-col gap-2">
-                {messages.map((message) => {
-                  const outbound = message.direction === "outbound";
+              <div className="mx-auto flex max-w-5xl flex-col gap-1.5">
+                {messages.map((message, index) => {
+                  const showDay =
+                    index === 0 ||
+                    messageDateKey(messages[index - 1]) !==
+                      messageDateKey(message);
                   return (
-                    <div
-                      key={message.publicId}
-                      className={`flex ${
-                        outbound ? "justify-end" : "justify-start"
-                      }`}
-                    >
-                      <div
-                        className={`max-w-[82%] rounded-lg px-3 py-2 text-sm shadow md:max-w-[66%] ${
-                          outbound
-                            ? "bg-[#005c4b] text-white"
-                            : "bg-[#202c33] text-slate-50"
-                        }`}
-                      >
-                        {[
-                          "image",
-                          "video",
-                          "audio",
-                          "document",
-                          "sticker",
-                        ].includes(message.messageType) ? (
-                          <p className="mb-1 flex items-center gap-1.5 rounded bg-black/15 px-2 py-1 text-xs text-slate-200">
-                            <Paperclip className="h-3.5 w-3.5" />
-                            {String(
-                              message.media.link ?? message.media.id ?? "media"
-                            )}
-                          </p>
-                        ) : null}
-                        {message.messageType === "location" ? (
-                          <p className="mb-1 flex items-center gap-1.5 rounded bg-black/15 px-2 py-1 text-xs text-slate-200">
-                            <MapPin className="h-3.5 w-3.5" />
-                            {String(message.location.latitude ?? "")},{" "}
-                            {String(message.location.longitude ?? "")}
-                          </p>
-                        ) : null}
-                        <p className="whitespace-pre-wrap leading-6">
-                          {messageText(message)}
-                        </p>
-                        {message.failureReason ? (
-                          <p className="mt-2 rounded bg-rose-500/20 px-2 py-1 text-xs text-rose-100">
-                            {message.failureReason}
-                          </p>
-                        ) : null}
-                        <div className="mt-1 flex items-center justify-end gap-1.5 text-[11px] text-slate-300/80">
-                          <span>{formatChatTime(message.createdAt)}</span>
-                          {outbound ? (
-                            <span
-                              title={deliveryStatus(message) || "sent"}
-                              className={
-                                deliveryStatus(message) === "read"
-                                  ? "font-bold text-[#53bdeb]"
-                                  : deliveryStatus(message) === "failed"
-                                  ? "font-bold text-rose-300"
-                                  : "text-slate-300"
-                              }
-                            >
-                              {deliveryTick(message)}
-                            </span>
-                          ) : null}
+                    <div key={message.publicId} className="contents">
+                      {showDay ? (
+                        <div className="my-3 flex justify-center">
+                          <span className="rounded-lg bg-[#182229]/95 px-3 py-1.5 text-[11px] font-medium text-slate-300 shadow">
+                            {formatMessageDay(message)}
+                          </span>
                         </div>
-                      </div>
+                      ) : null}
+                      <WhatsAppMessageBubble
+                        message={message}
+                        messageMap={messageMap}
+                        onReply={(replyMessage) => {
+                          setReplyingTo(replyMessage);
+                          requestAnimationFrame(() =>
+                            composerRef.current?.focus(),
+                          );
+                        }}
+                      />
                     </div>
                   );
                 })}
                 {!messages.length ? (
-                  <div className="mx-auto mt-16 rounded-lg border border-white/10 bg-[#202c33]/90 px-5 py-4 text-center text-sm text-slate-300">
-                    Choose a conversation or enter a phone number to begin.
+                  <div className="mx-auto my-auto flex max-w-sm flex-col items-center px-6 py-16 text-center">
+                    <div className="flex h-20 w-20 items-center justify-center rounded-full bg-[#202c33] text-[#8696a0] shadow-inner">
+                      <MessageSquare className="h-9 w-9" />
+                    </div>
+                    <h3 className="mt-5 text-lg font-medium text-slate-100">
+                      WhatsApp platform inbox
+                    </h3>
+                    <p className="mt-2 text-sm leading-6 text-slate-400">
+                      Select a conversation to review messages, media,
+                      documents, locations, and delivery updates.
+                    </p>
                   </div>
                 ) : null}
+                <div ref={messageEndRef} />
               </div>
             </div>
 
-            <div className="relative border-t border-white/10 bg-[#202c33] p-3">
+            <div className="relative shrink-0 border-t border-white/10 bg-[#202c33] p-2.5 sm:p-3">
               {selectedConversation && !selectedConversation.isSessionOpen ? (
                 <div className="mb-3 rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-100">
                   24h session closed. Send an approved template to restart.
+                </div>
+              ) : null}
+
+              {replyingTo ? (
+                <div className="mb-2 flex items-center gap-3 rounded-lg border-l-4 border-[#00a884] bg-[#111b21] px-3 py-2 shadow-sm">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-semibold text-emerald-300">
+                      Replying to{" "}
+                      {replyingTo.direction === "inbound"
+                        ? conversationLabel(selectedConversation)
+                        : "your message"}
+                    </p>
+                    <p className="mt-0.5 truncate text-xs text-slate-400">
+                      {whatsappMessagePreview(replyingTo)}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    title="Cancel reply"
+                    onClick={() => setReplyingTo(null)}
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-white/5 hover:text-white"
+                  >
+                    <XCircle className="h-4 w-4" />
+                  </button>
                 </div>
               ) : null}
 
@@ -1258,7 +1430,7 @@ export function WhatsappAdminPanel({
               ) : null}
 
               {["image", "video", "audio", "document", "sticker"].includes(
-                messageForm.type
+                messageForm.type,
               ) ? (
                 <div className="mb-3 grid gap-2 rounded-lg border border-white/10 bg-[#111b21] p-3 md:grid-cols-[160px_1fr_1fr]">
                   <select
@@ -1271,7 +1443,7 @@ export function WhatsappAdminPanel({
                         <option key={option} value={option}>
                           {option}
                         </option>
-                      )
+                      ),
                     )}
                   </select>
                   <Input
@@ -1417,6 +1589,7 @@ export function WhatsappAdminPanel({
                     />
                   ) : null}
                   <textarea
+                    ref={composerRef}
                     className="max-h-32 min-h-11 w-full resize-none rounded-3xl border border-white/10 bg-[#2a3942] px-4 py-3 text-sm text-slate-50 outline-none placeholder:text-slate-400 focus:border-emerald-400/50"
                     placeholder={composerPlaceholder()}
                     value={composerValue()}
@@ -1427,6 +1600,11 @@ export function WhatsappAdminPanel({
                     }}
                     onChange={(event) => updateComposerText(event.target.value)}
                     onKeyDown={(event) => {
+                      if (event.key === "Escape" && replyingTo) {
+                        event.preventDefault();
+                        setReplyingTo(null);
+                        return;
+                      }
                       if (
                         event.key === "Enter" &&
                         !event.shiftKey &&
@@ -1457,619 +1635,636 @@ export function WhatsappAdminPanel({
 
   return (
     <>
-    <section className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
-      <Card className="border-border/70 bg-card/80">
-        <CardHeader className="gap-4">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <CardDescription className="uppercase tracking-[0.2em] text-muted-foreground">
-                Control
-              </CardDescription>
-              <CardTitle className="mt-2 text-2xl">WhatsApp console</CardTitle>
-            </div>
-            <Button
-              variant="outline"
-              onClick={() => void refresh()}
-              disabled={working === "refresh"}
-            >
-              <RefreshCw className="h-4 w-4" />
-              {working === "refresh" ? "Refreshing..." : "Refresh"}
-            </Button>
-          </div>
-
-          <div className="grid gap-3 lg:grid-cols-[1fr_auto]">
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                className="pl-9"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") void refresh();
-                }}
-                placeholder="Search template, phone, vendor, provider id, or failure reason"
-              />
-            </div>
-            <Button
-              onClick={() => void refresh()}
-              disabled={working === "refresh"}
-            >
-              Search
-            </Button>
-          </div>
-
-          <div className="grid gap-2 md:grid-cols-3">
-            <select
-              className="h-10 rounded-md border border-border bg-background px-3 text-sm"
-              value={templateStatus}
-              onChange={(event) => setTemplateStatus(event.target.value)}
-            >
-              {[
-                "all",
-                "draft",
-                "submitted",
-                "approved",
-                "rejected",
-                "paused",
-                "disabled",
-              ].map((option) => (
-                <option key={option} value={option}>
-                  {option === "all" ? "All templates" : option}
-                </option>
-              ))}
-            </select>
-            <select
-              className="h-10 rounded-md border border-border bg-background px-3 text-sm"
-              value={optInStatus}
-              onChange={(event) => setOptInStatus(event.target.value)}
-            >
-              {["all", "opted_in", "opted_out", "revoked"].map((option) => (
-                <option key={option} value={option}>
-                  {option === "all" ? "All opt-ins" : option}
-                </option>
-              ))}
-            </select>
-            <select
-              className="h-10 rounded-md border border-border bg-background px-3 text-sm"
-              value={logStatus}
-              onChange={(event) => setLogStatus(event.target.value)}
-            >
-              {["all", "queued", "sent", "delivered", "read", "failed"].map(
-                (option) => (
-                  <option key={option} value={option}>
-                    {option === "all" ? "All sends" : option}
-                  </option>
-                )
-              )}
-            </select>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            {VIEW_OPTIONS.map((option) => {
-              const Icon = option.icon;
-              return (
+      <div className="h-full min-h-0 overflow-y-auto">
+        <section className="grid gap-6 p-5 lg:p-7 xl:grid-cols-[0.9fr_1.1fr]">
+          <Card className="border-border/70 bg-card/80">
+            <CardHeader className="gap-4">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <CardDescription className="uppercase tracking-[0.2em] text-muted-foreground">
+                    Control
+                  </CardDescription>
+                  <CardTitle className="mt-2 text-2xl">
+                    WhatsApp console
+                  </CardTitle>
+                </div>
                 <Button
-                  key={option.key}
-                  variant={view === option.key ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => setView(option.key)}
+                  variant="outline"
+                  onClick={() => void refresh()}
+                  disabled={working === "refresh"}
                 >
-                  <Icon className="h-4 w-4" />
-                  {option.label}
+                  <RefreshCw className="h-4 w-4" />
+                  {working === "refresh" ? "Refreshing..." : "Refresh"}
                 </Button>
-              );
-            })}
-          </div>
+              </div>
 
-          {error ? (
-            <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
-              {error}
-            </div>
-          ) : null}
-          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <Badge
-              variant={socketState === "connected" ? "success" : "outline"}
-              className="gap-2"
-            >
-              <Wifi className="h-3.5 w-3.5" />
-              {socketState === "connected"
-                ? "Live inbox connected"
-                : "Live inbox connecting"}
-            </Badge>
-            {liveNotice ? <span>{liveNotice}</span> : null}
-          </div>
-        </CardHeader>
-
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <p className="text-sm font-medium">Platform WhatsApp reply</p>
-            {!selectedConversation ? (
-              <Input
-                placeholder="New recipient phone"
-                value={messageForm.to}
-                onChange={(event) =>
-                  setMessageForm((current) => ({
-                    ...current,
-                    to: event.target.value,
-                  }))
-                }
-              />
-            ) : null}
-            <select
-              className="h-10 w-full rounded-md border border-border bg-background px-3 text-sm"
-              value={messageForm.type}
-              onChange={(event) =>
-                setMessageForm((current) => ({
-                  ...current,
-                  type: event.target.value,
-                }))
-              }
-            >
-              {[
-                "text",
-                "emoji",
-                "image",
-                "video",
-                "audio",
-                "document",
-                "sticker",
-                "location",
-                "template",
-              ].map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
-            {["text", "emoji"].includes(messageForm.type) ? (
-              <textarea
-                className="min-h-20 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-                placeholder={
-                  messageForm.type === "emoji"
-                    ? "Emoji or short message"
-                    : "Message text"
-                }
-                value={
-                  messageForm.type === "emoji"
-                    ? messageForm.emoji
-                    : messageForm.text
-                }
-                onChange={(event) =>
-                  setMessageForm((current) => ({
-                    ...current,
-                    [messageForm.type === "emoji" ? "emoji" : "text"]:
-                      event.target.value,
-                  }))
-                }
-              />
-            ) : null}
-            {["image", "video", "audio", "document", "sticker"].includes(
-              messageForm.type
-            ) ? (
-              <div className="space-y-2">
-                <Input
-                  placeholder="Media URL"
-                  value={messageForm.mediaUrl}
-                  onChange={(event) =>
-                    setMessageForm((current) => ({
-                      ...current,
-                      mediaUrl: event.target.value,
-                    }))
-                  }
-                />
-                <Input
-                  placeholder="Media ID"
-                  value={messageForm.mediaId}
-                  onChange={(event) =>
-                    setMessageForm((current) => ({
-                      ...current,
-                      mediaId: event.target.value,
-                    }))
-                  }
-                />
-                <Input
-                  placeholder="Caption"
-                  value={messageForm.caption}
-                  onChange={(event) =>
-                    setMessageForm((current) => ({
-                      ...current,
-                      caption: event.target.value,
-                    }))
-                  }
-                />
-                {messageForm.type === "document" ? (
+              <div className="grid gap-3 lg:grid-cols-[1fr_auto]">
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
-                    placeholder="Filename"
-                    value={messageForm.filename}
+                    className="pl-9"
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") void refresh();
+                    }}
+                    placeholder="Search template, phone, vendor, provider id, or failure reason"
+                  />
+                </div>
+                <Button
+                  onClick={() => void refresh()}
+                  disabled={working === "refresh"}
+                >
+                  Search
+                </Button>
+              </div>
+
+              <div className="grid gap-2 md:grid-cols-3">
+                <select
+                  className="h-10 rounded-md border border-border bg-background px-3 text-sm"
+                  value={templateStatus}
+                  onChange={(event) => setTemplateStatus(event.target.value)}
+                >
+                  {[
+                    "all",
+                    "draft",
+                    "submitted",
+                    "approved",
+                    "rejected",
+                    "paused",
+                    "disabled",
+                  ].map((option) => (
+                    <option key={option} value={option}>
+                      {option === "all" ? "All templates" : option}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  className="h-10 rounded-md border border-border bg-background px-3 text-sm"
+                  value={optInStatus}
+                  onChange={(event) => setOptInStatus(event.target.value)}
+                >
+                  {["all", "opted_in", "opted_out", "revoked"].map((option) => (
+                    <option key={option} value={option}>
+                      {option === "all" ? "All opt-ins" : option}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  className="h-10 rounded-md border border-border bg-background px-3 text-sm"
+                  value={logStatus}
+                  onChange={(event) => setLogStatus(event.target.value)}
+                >
+                  {["all", "queued", "sent", "delivered", "read", "failed"].map(
+                    (option) => (
+                      <option key={option} value={option}>
+                        {option === "all" ? "All sends" : option}
+                      </option>
+                    ),
+                  )}
+                </select>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                {VIEW_OPTIONS.map((option) => {
+                  const Icon = option.icon;
+                  return (
+                    <Button
+                      key={option.key}
+                      variant={view === option.key ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setView(option.key)}
+                    >
+                      <Icon className="h-4 w-4" />
+                      {option.label}
+                    </Button>
+                  );
+                })}
+              </div>
+
+              {error ? (
+                <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
+                  {error}
+                </div>
+              ) : null}
+              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                <Badge
+                  variant={socketState === "connected" ? "success" : "outline"}
+                  className="gap-2"
+                >
+                  <Wifi className="h-3.5 w-3.5" />
+                  {socketState === "connected"
+                    ? "Live inbox connected"
+                    : "Live inbox connecting"}
+                </Badge>
+                {liveNotice ? <span>{liveNotice}</span> : null}
+              </div>
+            </CardHeader>
+
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <p className="text-sm font-medium">Platform WhatsApp reply</p>
+                {!selectedConversation ? (
+                  <Input
+                    placeholder="New recipient phone"
+                    value={messageForm.to}
                     onChange={(event) =>
                       setMessageForm((current) => ({
                         ...current,
-                        filename: event.target.value,
+                        to: event.target.value,
                       }))
                     }
                   />
                 ) : null}
+                <select
+                  className="h-10 w-full rounded-md border border-border bg-background px-3 text-sm"
+                  value={messageForm.type}
+                  onChange={(event) =>
+                    setMessageForm((current) => ({
+                      ...current,
+                      type: event.target.value,
+                    }))
+                  }
+                >
+                  {[
+                    "text",
+                    "emoji",
+                    "image",
+                    "video",
+                    "audio",
+                    "document",
+                    "sticker",
+                    "location",
+                    "template",
+                  ].map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+                {["text", "emoji"].includes(messageForm.type) ? (
+                  <textarea
+                    className="min-h-20 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                    placeholder={
+                      messageForm.type === "emoji"
+                        ? "Emoji or short message"
+                        : "Message text"
+                    }
+                    value={
+                      messageForm.type === "emoji"
+                        ? messageForm.emoji
+                        : messageForm.text
+                    }
+                    onChange={(event) =>
+                      setMessageForm((current) => ({
+                        ...current,
+                        [messageForm.type === "emoji" ? "emoji" : "text"]:
+                          event.target.value,
+                      }))
+                    }
+                  />
+                ) : null}
+                {["image", "video", "audio", "document", "sticker"].includes(
+                  messageForm.type,
+                ) ? (
+                  <div className="space-y-2">
+                    <Input
+                      placeholder="Media URL"
+                      value={messageForm.mediaUrl}
+                      onChange={(event) =>
+                        setMessageForm((current) => ({
+                          ...current,
+                          mediaUrl: event.target.value,
+                        }))
+                      }
+                    />
+                    <Input
+                      placeholder="Media ID"
+                      value={messageForm.mediaId}
+                      onChange={(event) =>
+                        setMessageForm((current) => ({
+                          ...current,
+                          mediaId: event.target.value,
+                        }))
+                      }
+                    />
+                    <Input
+                      placeholder="Caption"
+                      value={messageForm.caption}
+                      onChange={(event) =>
+                        setMessageForm((current) => ({
+                          ...current,
+                          caption: event.target.value,
+                        }))
+                      }
+                    />
+                    {messageForm.type === "document" ? (
+                      <Input
+                        placeholder="Filename"
+                        value={messageForm.filename}
+                        onChange={(event) =>
+                          setMessageForm((current) => ({
+                            ...current,
+                            filename: event.target.value,
+                          }))
+                        }
+                      />
+                    ) : null}
+                  </div>
+                ) : null}
+                {messageForm.type === "location" ? (
+                  <div className="grid gap-2 md:grid-cols-2">
+                    <Input
+                      placeholder="Latitude"
+                      value={messageForm.latitude}
+                      onChange={(event) =>
+                        setMessageForm((current) => ({
+                          ...current,
+                          latitude: event.target.value,
+                        }))
+                      }
+                    />
+                    <Input
+                      placeholder="Longitude"
+                      value={messageForm.longitude}
+                      onChange={(event) =>
+                        setMessageForm((current) => ({
+                          ...current,
+                          longitude: event.target.value,
+                        }))
+                      }
+                    />
+                    <Input
+                      placeholder="Place name"
+                      value={messageForm.name}
+                      onChange={(event) =>
+                        setMessageForm((current) => ({
+                          ...current,
+                          name: event.target.value,
+                        }))
+                      }
+                    />
+                    <Input
+                      placeholder="Address"
+                      value={messageForm.address}
+                      onChange={(event) =>
+                        setMessageForm((current) => ({
+                          ...current,
+                          address: event.target.value,
+                        }))
+                      }
+                    />
+                  </div>
+                ) : null}
+                {messageForm.type === "template" ? (
+                  <Input
+                    placeholder="Template name"
+                    value={messageForm.templateName}
+                    onChange={(event) =>
+                      setMessageForm((current) => ({
+                        ...current,
+                        templateName: event.target.value,
+                      }))
+                    }
+                  />
+                ) : null}
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    onClick={() => void sendPlatformMessage()}
+                    disabled={working === "send-platform-message"}
+                  >
+                    <Send className="h-4 w-4" />
+                    {working === "send-platform-message"
+                      ? "Sending..."
+                      : "Send"}
+                  </Button>
+                  {selectedConversation ? (
+                    <Button
+                      variant="outline"
+                      onClick={() => void markSelectedRead()}
+                    >
+                      <CheckCircle2 className="h-4 w-4" />
+                      Mark read
+                    </Button>
+                  ) : null}
+                </div>
+                {selectedConversation && !selectedConversation.isSessionOpen ? (
+                  <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+                    24h session is closed. Use an approved template to restart
+                    the conversation.
+                  </p>
+                ) : null}
               </div>
-            ) : null}
-            {messageForm.type === "location" ? (
-              <div className="grid gap-2 md:grid-cols-2">
+
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div className="rounded-lg border border-border/70 bg-background/30 p-3">
+                  <p className="text-muted-foreground">Approved templates</p>
+                  <p className="mt-1 text-xl font-semibold">
+                    {analytics?.approvedTemplates ?? 0}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-border/70 bg-background/30 p-3">
+                  <p className="text-muted-foreground">Pending templates</p>
+                  <p className="mt-1 text-xl font-semibold">
+                    {analytics?.pendingTemplates ?? 0}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-border/70 bg-background/30 p-3">
+                  <p className="text-muted-foreground">Opt-ins 24h</p>
+                  <p className="mt-1 text-xl font-semibold">
+                    {analytics?.optIns24h ?? 0}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-border/70 bg-background/30 p-3">
+                  <p className="text-muted-foreground">Vendors 24h</p>
+                  <p className="mt-1 text-xl font-semibold">
+                    {analytics?.vendors24h ?? 0}
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <p className="text-sm font-medium">Create template</p>
                 <Input
-                  placeholder="Latitude"
-                  value={messageForm.latitude}
+                  placeholder="template_name"
+                  value={templateForm.name}
                   onChange={(event) =>
-                    setMessageForm((current) => ({
-                      ...current,
-                      latitude: event.target.value,
-                    }))
-                  }
-                />
-                <Input
-                  placeholder="Longitude"
-                  value={messageForm.longitude}
-                  onChange={(event) =>
-                    setMessageForm((current) => ({
-                      ...current,
-                      longitude: event.target.value,
-                    }))
-                  }
-                />
-                <Input
-                  placeholder="Place name"
-                  value={messageForm.name}
-                  onChange={(event) =>
-                    setMessageForm((current) => ({
+                    setTemplateForm((current) => ({
                       ...current,
                       name: event.target.value,
                     }))
                   }
                 />
-                <Input
-                  placeholder="Address"
-                  value={messageForm.address}
+                <div className="grid gap-2 md:grid-cols-2">
+                  <select
+                    className="h-10 rounded-md border border-border bg-background px-3 text-sm"
+                    value={templateForm.category}
+                    onChange={(event) =>
+                      setTemplateForm((current) => ({
+                        ...current,
+                        category: event.target.value,
+                      }))
+                    }
+                  >
+                    {["utility", "marketing", "authentication", "service"].map(
+                      (option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ),
+                    )}
+                  </select>
+                  <Input
+                    placeholder="Language"
+                    value={templateForm.language}
+                    onChange={(event) =>
+                      setTemplateForm((current) => ({
+                        ...current,
+                        language: event.target.value,
+                      }))
+                    }
+                  />
+                </div>
+                <textarea
+                  className="min-h-24 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                  placeholder="Template body"
+                  value={templateForm.bodyText}
                   onChange={(event) =>
-                    setMessageForm((current) => ({
+                    setTemplateForm((current) => ({
                       ...current,
-                      address: event.target.value,
+                      bodyText: event.target.value,
                     }))
                   }
                 />
-              </div>
-            ) : null}
-            {messageForm.type === "template" ? (
-              <Input
-                placeholder="Template name"
-                value={messageForm.templateName}
-                onChange={(event) =>
-                  setMessageForm((current) => ({
-                    ...current,
-                    templateName: event.target.value,
-                  }))
-                }
-              />
-            ) : null}
-            <div className="flex flex-wrap gap-2">
-              <Button
-                onClick={() => void sendPlatformMessage()}
-                disabled={working === "send-platform-message"}
-              >
-                <Send className="h-4 w-4" />
-                {working === "send-platform-message" ? "Sending..." : "Send"}
-              </Button>
-              {selectedConversation ? (
                 <Button
-                  variant="outline"
-                  onClick={() => void markSelectedRead()}
+                  onClick={() => void createTemplate()}
+                  disabled={working === "template"}
                 >
-                  <CheckCircle2 className="h-4 w-4" />
-                  Mark read
+                  Create template
                 </Button>
-              ) : null}
-            </div>
-            {selectedConversation && !selectedConversation.isSessionOpen ? (
-              <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
-                24h session is closed. Use an approved template to restart the
-                conversation.
-              </p>
-            ) : null}
-          </div>
+              </div>
 
-          <div className="grid grid-cols-2 gap-3 text-sm">
-            <div className="rounded-lg border border-border/70 bg-background/30 p-3">
-              <p className="text-muted-foreground">Approved templates</p>
-              <p className="mt-1 text-xl font-semibold">
-                {analytics?.approvedTemplates ?? 0}
-              </p>
-            </div>
-            <div className="rounded-lg border border-border/70 bg-background/30 p-3">
-              <p className="text-muted-foreground">Pending templates</p>
-              <p className="mt-1 text-xl font-semibold">
-                {analytics?.pendingTemplates ?? 0}
-              </p>
-            </div>
-            <div className="rounded-lg border border-border/70 bg-background/30 p-3">
-              <p className="text-muted-foreground">Opt-ins 24h</p>
-              <p className="mt-1 text-xl font-semibold">
-                {analytics?.optIns24h ?? 0}
-              </p>
-            </div>
-            <div className="rounded-lg border border-border/70 bg-background/30 p-3">
-              <p className="text-muted-foreground">Vendors 24h</p>
-              <p className="mt-1 text-xl font-semibold">
-                {analytics?.vendors24h ?? 0}
-              </p>
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <p className="text-sm font-medium">Create template</p>
-            <Input
-              placeholder="template_name"
-              value={templateForm.name}
-              onChange={(event) =>
-                setTemplateForm((current) => ({
-                  ...current,
-                  name: event.target.value,
-                }))
-              }
-            />
-            <div className="grid gap-2 md:grid-cols-2">
-              <select
-                className="h-10 rounded-md border border-border bg-background px-3 text-sm"
-                value={templateForm.category}
-                onChange={(event) =>
-                  setTemplateForm((current) => ({
-                    ...current,
-                    category: event.target.value,
-                  }))
-                }
-              >
-                {["utility", "marketing", "authentication", "service"].map(
-                  (option) => (
+              <div className="space-y-2">
+                <p className="text-sm font-medium">Record opt-in</p>
+                <Input
+                  placeholder="Phone number"
+                  value={optInForm.phone}
+                  onChange={(event) =>
+                    setOptInForm((current) => ({
+                      ...current,
+                      phone: event.target.value,
+                    }))
+                  }
+                />
+                <select
+                  className="h-10 w-full rounded-md border border-border bg-background px-3 text-sm"
+                  value={optInForm.status}
+                  onChange={(event) =>
+                    setOptInForm((current) => ({
+                      ...current,
+                      status: event.target.value,
+                    }))
+                  }
+                >
+                  {["opted_in", "opted_out", "revoked"].map((option) => (
                     <option key={option} value={option}>
                       {option}
                     </option>
-                  )
-                )}
-              </select>
-              <Input
-                placeholder="Language"
-                value={templateForm.language}
-                onChange={(event) =>
-                  setTemplateForm((current) => ({
-                    ...current,
-                    language: event.target.value,
-                  }))
-                }
-              />
-            </div>
-            <textarea
-              className="min-h-24 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-              placeholder="Template body"
-              value={templateForm.bodyText}
-              onChange={(event) =>
-                setTemplateForm((current) => ({
-                  ...current,
-                  bodyText: event.target.value,
-                }))
-              }
-            />
-            <Button
-              onClick={() => void createTemplate()}
-              disabled={working === "template"}
-            >
-              Create template
-            </Button>
-          </div>
-
-          <div className="space-y-2">
-            <p className="text-sm font-medium">Record opt-in</p>
-            <Input
-              placeholder="Phone number"
-              value={optInForm.phone}
-              onChange={(event) =>
-                setOptInForm((current) => ({
-                  ...current,
-                  phone: event.target.value,
-                }))
-              }
-            />
-            <select
-              className="h-10 w-full rounded-md border border-border bg-background px-3 text-sm"
-              value={optInForm.status}
-              onChange={(event) =>
-                setOptInForm((current) => ({
-                  ...current,
-                  status: event.target.value,
-                }))
-              }
-            >
-              {["opted_in", "opted_out", "revoked"].map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
-            <textarea
-              className="min-h-20 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-              placeholder="Consent note"
-              value={optInForm.consentText}
-              onChange={(event) =>
-                setOptInForm((current) => ({
-                  ...current,
-                  consentText: event.target.value,
-                }))
-              }
-            />
-            <Button
-              onClick={() => void saveOptIn()}
-              disabled={working === "optin"}
-            >
-              Save opt-in
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card className="border-border/70 bg-card/80">
-        <CardHeader>
-          <CardTitle>
-            {VIEW_OPTIONS.find((option) => option.key === view)?.label}
-          </CardTitle>
-          <CardDescription>
-            {activeRecords} records returned for the current filters.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {view === "templates"
-            ? data?.templates.map((template) => (
-                <div
-                  key={template.id}
-                  className="rounded-lg border border-border/70 bg-background/30 p-4"
+                  ))}
+                </select>
+                <textarea
+                  className="min-h-20 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                  placeholder="Consent note"
+                  value={optInForm.consentText}
+                  onChange={(event) =>
+                    setOptInForm((current) => ({
+                      ...current,
+                      consentText: event.target.value,
+                    }))
+                  }
+                />
+                <Button
+                  onClick={() => void saveOptIn()}
+                  disabled={working === "optin"}
                 >
-                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                    <div className="space-y-2">
-                      <div className="flex flex-wrap gap-2">
-                        <Badge variant={toneForStatus(template.status)}>
-                          {template.status}
-                        </Badge>
-                        <Badge variant="outline">{template.category}</Badge>
-                        <Badge variant="outline">{template.language}</Badge>
-                      </div>
-                      <h3 className="text-lg font-semibold">{template.name}</h3>
-                      <p className="line-clamp-3 text-sm text-muted-foreground">
-                        {template.bodyText}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {template.messageCount} sends / {template.failedCount}{" "}
-                        failed
-                      </p>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {["submitted", "approved", "rejected", "disabled"].map(
-                        (status) => (
-                          <Button
-                            key={status}
-                            size="sm"
-                            variant={
-                              status === "approved" ? "default" : "outline"
-                            }
-                            onClick={() =>
-                              void updateTemplateStatus(template, status)
-                            }
-                            disabled={working === `template-${template.id}`}
-                          >
-                            {status === "approved" ? (
-                              <CheckCircle2 className="h-4 w-4" />
-                            ) : null}
-                            {status}
-                          </Button>
-                        )
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))
-            : null}
+                  Save opt-in
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
 
-          {view === "optIns"
-            ? data?.optIns.map((optIn) => (
-                <div
-                  key={optIn.id}
-                  className="rounded-lg border border-border/70 bg-background/30 p-4"
-                >
-                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                    <div className="space-y-2">
-                      <Badge variant={toneForStatus(optIn.status)}>
-                        {optIn.status}
-                      </Badge>
-                      <h3 className="text-lg font-semibold">
-                        {optIn.phoneE164 ?? optIn.phone}
-                      </h3>
-                      <p className="text-sm text-muted-foreground">
-                        {vendorLabel(optIn.vendor)} /{" "}
-                        {optIn.user?.fullName ?? "No linked user"}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        Source {optIn.source} / created{" "}
-                        {formatDate(optIn.createdAt)}
-                      </p>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {["opted_in", "opted_out", "revoked"].map((status) => (
-                        <Button
-                          key={status}
-                          size="sm"
-                          variant={
-                            status === "opted_in" ? "default" : "outline"
-                          }
-                          onClick={() => void updateOptInStatus(optIn, status)}
-                          disabled={working === `optin-${optIn.id}`}
-                        >
-                          {status}
-                        </Button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              ))
-            : null}
-
-          {view === "logs" || view === "failed"
-            ? (view === "failed" ? data?.failedSends : data?.logs)?.map(
-                (log) => (
-                  <div
-                    key={log.id}
-                    className="rounded-lg border border-border/70 bg-background/30 p-4"
-                  >
-                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                      <div className="space-y-2">
-                        <div className="flex flex-wrap gap-2">
-                          <Badge variant={toneForStatus(log.status)}>
-                            {log.status}
-                          </Badge>
-                          <Badge variant="outline">{log.messageType}</Badge>
-                          {log.templateName ? (
-                            <Badge variant="outline">{log.templateName}</Badge>
-                          ) : null}
-                        </div>
-                        <h3 className="text-lg font-semibold">
-                          {log.recipientPhoneE164 ?? log.recipientPhone}
-                        </h3>
-                        <p className="text-sm text-muted-foreground">
-                          {vendorLabel(log.vendor)} /{" "}
-                          {formatDate(log.createdAt)}
-                        </p>
-                        {log.failureReason ? (
-                          <p className="rounded-md bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
-                            {log.failureReason}
+          <Card className="border-border/70 bg-card/80">
+            <CardHeader>
+              <CardTitle>
+                {VIEW_OPTIONS.find((option) => option.key === view)?.label}
+              </CardTitle>
+              <CardDescription>
+                {activeRecords} records returned for the current filters.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {view === "templates"
+                ? data?.templates.map((template) => (
+                    <div
+                      key={template.id}
+                      className="rounded-lg border border-border/70 bg-background/30 p-4"
+                    >
+                      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                        <div className="space-y-2">
+                          <div className="flex flex-wrap gap-2">
+                            <Badge variant={toneForStatus(template.status)}>
+                              {template.status}
+                            </Badge>
+                            <Badge variant="outline">{template.category}</Badge>
+                            <Badge variant="outline">{template.language}</Badge>
+                          </div>
+                          <h3 className="text-lg font-semibold">
+                            {template.name}
+                          </h3>
+                          <p className="line-clamp-3 text-sm text-muted-foreground">
+                            {template.bodyText}
                           </p>
-                        ) : null}
-                      </div>
-                      <div className="text-sm text-muted-foreground lg:text-right">
-                        <p>
-                          {log.currency} {log.estimatedCost.toFixed(4)}
-                        </p>
-                        <p>
-                          {log.providerMessageId ??
-                            log.failureCode ??
-                            "No provider id"}
-                        </p>
+                          <p className="text-xs text-muted-foreground">
+                            {template.messageCount} sends /{" "}
+                            {template.failedCount} failed
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {[
+                            "submitted",
+                            "approved",
+                            "rejected",
+                            "disabled",
+                          ].map((status) => (
+                            <Button
+                              key={status}
+                              size="sm"
+                              variant={
+                                status === "approved" ? "default" : "outline"
+                              }
+                              onClick={() =>
+                                void updateTemplateStatus(template, status)
+                              }
+                              disabled={working === `template-${template.id}`}
+                            >
+                              {status === "approved" ? (
+                                <CheckCircle2 className="h-4 w-4" />
+                              ) : null}
+                              {status}
+                            </Button>
+                          ))}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                )
-              )
-            : null}
+                  ))
+                : null}
 
-          {activeRecords === 0 ? (
-            <div className="rounded-lg border border-border/70 bg-background/30 p-6 text-center text-sm text-muted-foreground">
-              No records match the current filters.
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
-    </section>
-    {actionModal.modal}
+              {view === "optIns"
+                ? data?.optIns.map((optIn) => (
+                    <div
+                      key={optIn.id}
+                      className="rounded-lg border border-border/70 bg-background/30 p-4"
+                    >
+                      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                        <div className="space-y-2">
+                          <Badge variant={toneForStatus(optIn.status)}>
+                            {optIn.status}
+                          </Badge>
+                          <h3 className="text-lg font-semibold">
+                            {optIn.phoneE164 ?? optIn.phone}
+                          </h3>
+                          <p className="text-sm text-muted-foreground">
+                            {vendorLabel(optIn.vendor)} /{" "}
+                            {optIn.user?.fullName ?? "No linked user"}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            Source {optIn.source} / created{" "}
+                            {formatDate(optIn.createdAt)}
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {["opted_in", "opted_out", "revoked"].map(
+                            (status) => (
+                              <Button
+                                key={status}
+                                size="sm"
+                                variant={
+                                  status === "opted_in" ? "default" : "outline"
+                                }
+                                onClick={() =>
+                                  void updateOptInStatus(optIn, status)
+                                }
+                                disabled={working === `optin-${optIn.id}`}
+                              >
+                                {status}
+                              </Button>
+                            ),
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                : null}
+
+              {view === "logs" || view === "failed"
+                ? (view === "failed" ? data?.failedSends : data?.logs)?.map(
+                    (log) => (
+                      <div
+                        key={log.id}
+                        className="rounded-lg border border-border/70 bg-background/30 p-4"
+                      >
+                        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                          <div className="space-y-2">
+                            <div className="flex flex-wrap gap-2">
+                              <Badge variant={toneForStatus(log.status)}>
+                                {log.status}
+                              </Badge>
+                              <Badge variant="outline">{log.messageType}</Badge>
+                              {log.templateName ? (
+                                <Badge variant="outline">
+                                  {log.templateName}
+                                </Badge>
+                              ) : null}
+                            </div>
+                            <h3 className="text-lg font-semibold">
+                              {log.recipientPhoneE164 ?? log.recipientPhone}
+                            </h3>
+                            <p className="text-sm text-muted-foreground">
+                              {vendorLabel(log.vendor)} /{" "}
+                              {formatDate(log.createdAt)}
+                            </p>
+                            {log.failureReason ? (
+                              <p className="rounded-md bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
+                                {log.failureReason}
+                              </p>
+                            ) : null}
+                          </div>
+                          <div className="text-sm text-muted-foreground lg:text-right">
+                            <p>
+                              {log.currency} {log.estimatedCost.toFixed(4)}
+                            </p>
+                            <p>
+                              {log.providerMessageId ??
+                                log.failureCode ??
+                                "No provider id"}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    ),
+                  )
+                : null}
+
+              {activeRecords === 0 ? (
+                <div className="rounded-lg border border-border/70 bg-background/30 p-6 text-center text-sm text-muted-foreground">
+                  No records match the current filters.
+                </div>
+              ) : null}
+            </CardContent>
+          </Card>
+        </section>
+      </div>
+      {actionModal.modal}
     </>
   );
 }

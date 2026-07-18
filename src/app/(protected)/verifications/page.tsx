@@ -11,6 +11,7 @@ type KycOverview = {
     total: number
     pending: number
     approved: number
+    onlineVerified: number
     rejected: number
     manualReview: number
     providerQueued: number
@@ -22,11 +23,15 @@ type KycOverview = {
     fileUrl: string | null
     status: 'pending' | 'approved' | 'rejected'
     providerName: string | null
+    providerReference: string | null
+    providerData: Record<string, unknown> | null
     providerStatus: string
     verificationMode: 'provider' | 'manual'
     reviewNotes: string | null
     rejectionReason: string | null
     createdAt: string
+    submittedToProviderAt: string | null
+    verifiedAt: string | null
     vendorProfile: {
       id: number
       businessName: string
@@ -49,6 +54,7 @@ const EMPTY_SUMMARY: KycOverview['summary'] = {
   total: 0,
   pending: 0,
   approved: 0,
+  onlineVerified: 0,
   rejected: 0,
   manualReview: 0,
   providerQueued: 0,
@@ -83,6 +89,59 @@ function statusVariant(status: string): 'success' | 'warning' | 'danger' | 'seco
   if (status === 'rejected' || status === 'failed') return 'danger'
   if (status === 'pending' || status === 'queued' || status === 'processing') return 'warning'
   return 'secondary'
+}
+
+const PROVIDER_LABELS: Record<string, string> = {
+  accountExists: 'Account exists',
+  accountHolderName: 'Account holder',
+  consentVerified: 'Consent verified',
+  categories: 'Vehicle categories',
+  dateOfBirth: 'Date of birth',
+  digiLockerDateOfBirth: 'DigiLocker DOB',
+  digiLockerEmail: 'DigiLocker email',
+  digiLockerGender: 'DigiLocker gender',
+  digiLockerMobile: 'DigiLocker mobile',
+  digiLockerName: 'DigiLocker name',
+  documentType: 'Document type',
+  fileCount: 'Provider files',
+  fuelType: 'Fuel type',
+  gender: 'Gender',
+  guardianName: 'Guardian name',
+  holderName: 'Document holder',
+  issuers: 'Issuer',
+  legalName: 'Legal name',
+  licenseNumber: 'Licence number',
+  makerModel: 'Maker / model',
+  ownerName: 'RC owner',
+  expiryDate: 'Expiry date',
+  issueDate: 'Issue date',
+  issuingAuthority: 'Issuing authority',
+  registrationDate: 'Registration date',
+  registrationStatus: 'Registration status',
+  stateName: 'State',
+  tradeName: 'Trade name',
+  valid: 'Valid',
+  verifiedOn: 'Verified on',
+  vehicleClass: 'Vehicle class',
+}
+
+function providerSummaryRows(data: Record<string, unknown> | null) {
+  if (!data) return []
+  return Object.entries(data)
+    .filter(([, value]) => value !== null && value !== undefined && value !== '')
+    .map(([key, value]) => ({
+      key,
+      label: PROVIDER_LABELS[key] ?? key,
+      value: Array.isArray(value)
+        ? value.map((item) => {
+            if (!item || typeof item !== 'object') return String(item)
+            const record = item as Record<string, unknown>
+            return String(record.description || record.abbreviation || record.code || 'Category')
+          }).join(', ') || '-'
+        : typeof value === 'boolean'
+          ? value ? 'Yes' : 'No'
+          : String(value),
+    }))
 }
 
 export default async function AdminVerificationsPage() {
@@ -127,6 +186,10 @@ export default async function AdminVerificationsPage() {
             <div className="rounded-xl border border-border/70 bg-background/30 p-3">
               <p className="text-muted-foreground">Rejected</p>
               <p className="mt-1 text-2xl font-semibold">{summary.rejected}</p>
+            </div>
+            <div className="rounded-xl border border-border/70 bg-background/30 p-3">
+              <p className="text-muted-foreground">Online verified</p>
+              <p className="mt-1 text-2xl font-semibold">{summary.onlineVerified}</p>
             </div>
           </CardContent>
         </Card>
@@ -175,7 +238,24 @@ export default async function AdminVerificationsPage() {
                     </p>
                     <p>Document no: {document.documentNumber ?? 'Not provided'}</p>
                     <p>Provider: {document.providerName ?? 'Manual review'}</p>
+                    <p>Provider reference: {document.providerReference ?? 'Not available'}</p>
                   </div>
+
+                  {providerSummaryRows(document.providerData).length ? (
+                    <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/5 p-3">
+                      <p className="mb-2 text-sm font-medium text-emerald-700 dark:text-emerald-300">
+                        Verified provider details
+                      </p>
+                      <dl className="grid gap-x-4 gap-y-2 text-sm md:grid-cols-2">
+                        {providerSummaryRows(document.providerData).map((row) => (
+                          <div key={row.key}>
+                            <dt className="text-muted-foreground">{row.label}</dt>
+                            <dd className="font-medium">{row.value}</dd>
+                          </div>
+                        ))}
+                      </dl>
+                    </div>
+                  ) : null}
 
                   <div className="flex flex-wrap items-center gap-3 text-sm">
                     {document.fileUrl ? (
@@ -212,10 +292,19 @@ export default async function AdminVerificationsPage() {
                     Use manual review whenever the provider is down or a document needs human
                     verification before approval.
                   </p>
-                  <div className="flex gap-2">
-                    <ReviewKycButton documentId={document.id} decision="approve" />
-                    <ReviewKycButton documentId={document.id} decision="reject" />
-                  </div>
+                  {document.verificationMode === 'provider' && document.status === 'approved' ? (
+                    <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-300">
+                      Verified automatically by {document.providerName ?? 'the KYC provider'}
+                      {document.verifiedAt
+                        ? ` on ${new Date(document.verifiedAt).toLocaleString()}`
+                        : ''}.
+                    </div>
+                  ) : (
+                    <div className="flex gap-2">
+                      <ReviewKycButton documentId={document.id} decision="approve" />
+                      <ReviewKycButton documentId={document.id} decision="reject" />
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
