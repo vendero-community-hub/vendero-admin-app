@@ -20,6 +20,7 @@ const API_URL =
   ])
 const PAGE_PERMISSION_BY_PATH: Array<{ prefix: string; permission: string }> = [
   { prefix: '/vendors', permission: 'vendors' },
+  { prefix: '/domain-registrations', permission: 'vendors' },
   { prefix: '/staff', permission: 'staff' },
   { prefix: '/verifications', permission: 'verifications' },
   { prefix: '/subscriptions', permission: 'subscriptions' },
@@ -34,6 +35,8 @@ const PAGE_PERMISSION_BY_PATH: Array<{ prefix: string; permission: string }> = [
   { prefix: '/server', permission: 'server' },
   { prefix: '/links', permission: 'links' },
   { prefix: '/landing', permission: 'landing' },
+  { prefix: '/image-library', permission: 'image_library' },
+  { prefix: '/ai-management', permission: 'features' },
   { prefix: '/feature-analytics', permission: 'features' },
   { prefix: '/features', permission: 'features' },
   { prefix: '/banners', permission: 'banners' },
@@ -111,6 +114,7 @@ export async function middleware(request: NextRequest) {
         server: '/server',
         links: '/links',
         landing: '/landing',
+        image_library: '/image-library',
         features: '/features',
         banners: '/banners',
         legal_policies: '/legal',

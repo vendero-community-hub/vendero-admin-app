@@ -2837,7 +2837,7 @@ export function ThemeEditorPanel({
       formData.append("file", file);
       const uploaded = recordFromUnknown(await uploadAdminMedia(formData));
       const logoUrl = stringFromUnknown(
-        uploaded.url ?? uploaded.fileUrl ?? uploaded.publicUrl,
+        uploaded.transparentUrl ?? uploaded.url ?? uploaded.fileUrl ?? uploaded.publicUrl,
       ).trim();
       if (!logoUrl) throw new Error("Upload finished but no logo URL was returned.");
       updateComponentContentDraft(selectedComponentKey, {

@@ -43,6 +43,8 @@ type Plan = {
   isPublic: boolean;
   isDefault: boolean;
   requiresPaymentVerification: boolean;
+  includedAiCredits?: number;
+  trialAiCredits?: number;
   featureConfig?: Record<string, unknown>;
   pricingOptions?: Array<{
     id: string;
@@ -694,6 +696,14 @@ export default async function SubscriptionsPage({
                           </p>
                         ) : null}
                         <div className="mt-3 grid gap-2 text-xs">
+                          <p className="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 font-medium text-primary">
+                            {Number(plan.includedAiCredits ?? 0) > 0
+                              ? `${Number(plan.includedAiCredits).toLocaleString("en-IN")} AI credits included each billing cycle`
+                              : "No AI credits included"}
+                            {Number(plan.trialAiCredits ?? 0) > 0
+                              ? ` • ${Number(plan.trialAiCredits).toLocaleString("en-IN")} trial credits`
+                              : ""}
+                          </p>
                           {planBillingTerms(plan).map((term) => (
                             <p
                               key={term}

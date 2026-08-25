@@ -97,6 +97,8 @@ type Plan = {
   isPublic: boolean
   isDefault: boolean
   requiresPaymentVerification: boolean
+  includedAiCredits?: number
+  trialAiCredits?: number
   featureConfig?: Record<string, unknown>
   pricingOptions?: Array<{
     id: string
@@ -123,6 +125,26 @@ type PricingDraft = {
   periodValue: string
   priceAmount: string
   isDefault: boolean
+}
+
+const MAX_POSTGRES_INTEGER = 2_147_483_647
+
+function parseCreditAllowance(value: string, label: string) {
+  const normalized = value.trim()
+  const parsed = Number(normalized)
+  if (
+    normalized === '' ||
+    !Number.isSafeInteger(parsed) ||
+    parsed < 0 ||
+    parsed > MAX_POSTGRES_INTEGER
+  ) {
+    throw new Error(`${label} must be a whole number between 0 and ${MAX_POSTGRES_INTEGER.toLocaleString('en-IN')}.`)
+  }
+  return parsed
+}
+
+function formErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error && error.message.trim() ? error.message : fallback
 }
 
 export type PaymentGatewaySummary = {
@@ -719,22 +741,30 @@ function FeatureWizardStep({
 }
 
 function PricingManagementStep({
+  includedAiCredits,
+  trialAiCredits,
   upfrontPricingEnabled,
   firstPaymentAmount,
   firstPaymentCycles,
   firstPaymentCollectionMode,
   pricingRows,
+  onIncludedAiCreditsChange,
+  onTrialAiCreditsChange,
   onUpfrontPricingEnabledChange,
   onFirstPaymentAmountChange,
   onFirstPaymentCyclesChange,
   onFirstPaymentCollectionModeChange,
   onPricingRowsChange,
 }: {
+  includedAiCredits: string
+  trialAiCredits: string
   upfrontPricingEnabled: boolean
   firstPaymentAmount: string
   firstPaymentCycles: string
   firstPaymentCollectionMode: string
   pricingRows: PricingDraft[]
+  onIncludedAiCreditsChange: (value: string) => void
+  onTrialAiCreditsChange: (value: string) => void
   onUpfrontPricingEnabledChange: (value: boolean) => void
   onFirstPaymentAmountChange: (value: string) => void
   onFirstPaymentCyclesChange: (value: string) => void
@@ -771,6 +801,41 @@ function PricingManagementStep({
 
   return (
     <div className="space-y-4">
+      <div className="rounded-2xl border border-primary/25 bg-primary/5 p-4">
+        <div>
+          <p className="text-sm font-semibold">Included AI credits</p>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+            Active-plan credits refresh at each billing cycle. Unused plan credits expire; purchased credits are never changed.
+          </p>
+        </div>
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          <label className="space-y-1 text-sm">
+            <span className="text-muted-foreground">Credits per billing cycle</span>
+            <Input
+              value={includedAiCredits}
+              onChange={(event) => onIncludedAiCreditsChange(event.target.value)}
+              inputMode="numeric"
+              type="number"
+              min="0"
+              max={MAX_POSTGRES_INTEGER}
+              step="1"
+            />
+          </label>
+          <label className="space-y-1 text-sm">
+            <span className="text-muted-foreground">Credits during free trial</span>
+            <Input
+              value={trialAiCredits}
+              onChange={(event) => onTrialAiCreditsChange(event.target.value)}
+              inputMode="numeric"
+              type="number"
+              min="0"
+              max={MAX_POSTGRES_INTEGER}
+              step="1"
+            />
+          </label>
+        </div>
+      </div>
+
       <div className="rounded-2xl border border-border/70 bg-background/35 p-4">
         <label className="flex items-center justify-between gap-3 text-sm font-semibold">
           <span>Upfront pricing</span>
@@ -863,17 +928,23 @@ export function CreatePlanButton() {
   const [firstPaymentAmount, setFirstPaymentAmount] = useState('49')
   const [firstPaymentCycles, setFirstPaymentCycles] = useState('1')
   const [firstPaymentCollectionMode, setFirstPaymentCollectionMode] = useState('upfront_total')
+  const [includedAiCredits, setIncludedAiCredits] = useState('0')
+  const [trialAiCredits, setTrialAiCredits] = useState('0')
   const [isPublic, setIsPublic] = useState(true)
   const [isDefault, setIsDefault] = useState(false)
   const [requiresPaymentVerification, setRequiresPaymentVerification] = useState(true)
   const [featureState, setFeatureState] = useState<Record<string, boolean>>(() => buildFeatureState())
   const [trialFeatureState, setTrialFeatureState] = useState<Record<string, boolean>>(() => buildFeatureState())
   const [pricingRows, setPricingRows] = useState<PricingDraft[]>(() => defaultPricingDraft())
+  const [formError, setFormError] = useState<string | null>(null)
 
   async function createPlan() {
-    const pricingFields = planPricingFields(pricingRows)
     setWorking(true)
+    setFormError(null)
     try {
+      const pricingFields = planPricingFields(pricingRows)
+      const parsedIncludedAiCredits = parseCreditAllowance(includedAiCredits, 'Included AI credits')
+      const parsedTrialAiCredits = parseCreditAllowance(trialAiCredits, 'Trial AI credits')
       await requestJson('/api/v1/admin/subscriptions/plans', {
         code: `${slugFromName(name)}_${Date.now().toString().slice(-5)}`,
         name,
@@ -884,6 +955,8 @@ export function CreatePlanButton() {
         isPublic,
         isDefault,
         requiresPaymentVerification,
+        includedAiCredits: parsedIncludedAiCredits,
+        trialAiCredits: parsedTrialAiCredits,
         featureConfig: buildBillingFeatureConfig(undefined, {
           trialEnabled,
           freeTrialDays,
@@ -898,6 +971,8 @@ export function CreatePlanButton() {
         features: buildFeaturePayload(featureState),
       })
       window.location.reload()
+    } catch (error) {
+      setFormError(formErrorMessage(error, 'Subscription plan could not be created.'))
     } finally {
       setWorking(false)
     }
@@ -946,11 +1021,15 @@ export function CreatePlanButton() {
           />
         ) : (
           <PricingManagementStep
+            includedAiCredits={includedAiCredits}
+            trialAiCredits={trialAiCredits}
             upfrontPricingEnabled={upfrontPricingEnabled}
             firstPaymentAmount={firstPaymentAmount}
             firstPaymentCycles={firstPaymentCycles}
             firstPaymentCollectionMode={firstPaymentCollectionMode}
             pricingRows={pricingRows}
+            onIncludedAiCreditsChange={setIncludedAiCredits}
+            onTrialAiCreditsChange={setTrialAiCredits}
             onUpfrontPricingEnabledChange={setUpfrontPricingEnabled}
             onFirstPaymentAmountChange={setFirstPaymentAmount}
             onFirstPaymentCyclesChange={setFirstPaymentCycles}
@@ -958,6 +1037,11 @@ export function CreatePlanButton() {
             onPricingRowsChange={setPricingRows}
           />
         )}
+        {formError ? (
+          <p role="alert" className="mt-4 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+            {formError}
+          </p>
+        ) : null}
         <div className="mt-6 flex items-center justify-between gap-3 border-t border-border pt-4">
           <Button type="button" variant="outline" onClick={() => setStep((current) => Math.max(current - 1, 0))} disabled={step === 0 || working}>
             Back
@@ -1019,6 +1103,12 @@ export function UpdatePlanButton({ plan }: { plan: Plan }) {
   const [firstPaymentCollectionMode, setFirstPaymentCollectionMode] = useState(
     configString(plan.featureConfig, 'firstPaymentCollectionMode', 'upfront_total')
   )
+  const [includedAiCredits, setIncludedAiCredits] = useState(
+    String(Number(plan.includedAiCredits ?? plan.featureConfig?.includedAiCredits ?? 0))
+  )
+  const [trialAiCredits, setTrialAiCredits] = useState(
+    String(Number(plan.trialAiCredits ?? plan.featureConfig?.trialAiCredits ?? 0))
+  )
   const [isActive, setIsActive] = useState(plan.isActive)
   const [isPublic, setIsPublic] = useState(plan.isPublic)
   const [isDefault, setIsDefault] = useState(plan.isDefault)
@@ -1026,12 +1116,16 @@ export function UpdatePlanButton({ plan }: { plan: Plan }) {
   const [featureState, setFeatureState] = useState<Record<string, boolean>>(() => buildFeatureState(plan))
   const [trialFeatureState, setTrialFeatureState] = useState<Record<string, boolean>>(() => buildTrialFeatureState(plan))
   const [pricingRows, setPricingRows] = useState<PricingDraft[]>(() => pricingDraftsFromPlan(plan))
+  const [formError, setFormError] = useState<string | null>(null)
   const actionModal = useActionModal()
 
   async function updatePlan() {
-    const pricingFields = planPricingFields(pricingRows)
     setWorking(true)
+    setFormError(null)
     try {
+      const pricingFields = planPricingFields(pricingRows)
+      const parsedIncludedAiCredits = parseCreditAllowance(includedAiCredits, 'Included AI credits')
+      const parsedTrialAiCredits = parseCreditAllowance(trialAiCredits, 'Trial AI credits')
       await requestJson(
         `/api/v1/admin/subscriptions/plans/${plan.id}`,
         {
@@ -1044,6 +1138,8 @@ export function UpdatePlanButton({ plan }: { plan: Plan }) {
           isPublic,
           isDefault,
           requiresPaymentVerification,
+          includedAiCredits: parsedIncludedAiCredits,
+          trialAiCredits: parsedTrialAiCredits,
           featureConfig: buildBillingFeatureConfig(plan.featureConfig, {
             trialEnabled,
             freeTrialDays,
@@ -1060,6 +1156,8 @@ export function UpdatePlanButton({ plan }: { plan: Plan }) {
         'PUT'
       )
       window.location.reload()
+    } catch (error) {
+      setFormError(formErrorMessage(error, 'Subscription plan changes could not be saved.'))
     } finally {
       setWorking(false)
     }
@@ -1135,11 +1233,15 @@ export function UpdatePlanButton({ plan }: { plan: Plan }) {
           />
         ) : (
           <PricingManagementStep
+            includedAiCredits={includedAiCredits}
+            trialAiCredits={trialAiCredits}
             upfrontPricingEnabled={upfrontPricingEnabled}
             firstPaymentAmount={firstPaymentAmount}
             firstPaymentCycles={firstPaymentCycles}
             firstPaymentCollectionMode={firstPaymentCollectionMode}
             pricingRows={pricingRows}
+            onIncludedAiCreditsChange={setIncludedAiCredits}
+            onTrialAiCreditsChange={setTrialAiCredits}
             onUpfrontPricingEnabledChange={setUpfrontPricingEnabled}
             onFirstPaymentAmountChange={setFirstPaymentAmount}
             onFirstPaymentCyclesChange={setFirstPaymentCycles}
@@ -1147,6 +1249,11 @@ export function UpdatePlanButton({ plan }: { plan: Plan }) {
             onPricingRowsChange={setPricingRows}
           />
         )}
+        {formError ? (
+          <p role="alert" className="mt-4 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+            {formError}
+          </p>
+        ) : null}
         <div className="mt-6 flex items-center justify-between gap-3 border-t border-border pt-4">
           <Button type="button" variant="outline" onClick={() => setStep((current) => Math.max(current - 1, 0))} disabled={step === 0 || working}>
             Back
