@@ -28,6 +28,7 @@ import { Input } from "@/components/ui/input";
 import {
   THEME_DATA_SCHEMA_VERSION,
   defaultDataFieldsForThemeDataset,
+  normalizeThemeDataFieldKey,
   normalizeThemeDataKey,
   previewItemsForThemeDataset,
   themeDataDefinitions,
@@ -461,12 +462,13 @@ export function ThemeDummyDataPanel() {
       ],
     });
     if (!result.confirmed) return;
+    const type = dataFieldTypes.includes(result.values.type as ThemeDataFieldType)
+      ? (result.values.type as ThemeDataFieldType)
+      : "text";
     const nextField: ThemeDataField = {
-      key: result.values.key.trim().replace(/[^a-zA-Z0-9_.-]+/g, "_"),
+      key: normalizeThemeDataFieldKey(result.values.key, type),
       label: result.values.label.trim(),
-      type: dataFieldTypes.includes(result.values.type as ThemeDataFieldType)
-        ? (result.values.type as ThemeDataFieldType)
-        : "text",
+      type,
       required: result.values.required === "true",
       example: result.values.example ?? "",
     };
@@ -535,8 +537,7 @@ export function ThemeDummyDataPanel() {
                 : field.type === "image"
                   ? ("image" as const)
                 : ("text" as const),
-          imageScope: selectedDataset.datasetKey === "cabs" ? "cab" : "general",
-          storagePrefix: "uploads/",
+          imagePurpose: "platform.site-theme-asset" as const,
         })),
       ],
     });

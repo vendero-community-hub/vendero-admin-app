@@ -19,6 +19,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input'
 import { useActionModal } from '@/components/ui/action-modal'
 import { cn } from '@/lib/utils'
+import { uploadAdminMedia } from '@/lib/trusted-media'
 
 export type ImageLibraryPayload = Record<string, unknown> | null
 
@@ -566,26 +567,28 @@ export function ImageLibraryPanel({
       return
     }
 
-    const formData = new FormData()
-    if (itemForm.image) formData.append('image', itemForm.image)
-    formData.append('title', itemForm.title.trim())
-    formData.append('imageType', itemForm.imageType)
-    formData.append('categoryId', itemForm.categoryId)
-    formData.append('description', itemForm.description.trim())
-    formData.append('sortOrder', String(numberValue(itemForm.sortOrder, 0)))
-    formData.append('isActive', String(itemForm.isActive))
-
     setItemWorking(true)
     setError(null)
     setNotice(null)
     try {
+      const asset = itemForm.image
+        ? await uploadAdminMedia(itemForm.image, 'admin.image-library')
+        : null
       await requestAdmin(
         itemForm.apiId
           ? `/api/v1/admin/ai/reference-library/items/${encodeURIComponent(itemForm.apiId)}`
           : '/api/v1/admin/ai/reference-library/items',
         {
           method: itemForm.apiId ? 'PUT' : 'POST',
-          body: formData,
+          body: JSON.stringify({
+            title: itemForm.title.trim(),
+            imageType: itemForm.imageType,
+            categoryId: itemForm.categoryId,
+            description: itemForm.description.trim(),
+            sortOrder: numberValue(itemForm.sortOrder, 0),
+            isActive: itemForm.isActive,
+            ...(asset ? { imageObjectKey: asset.objectKey } : {}),
+          }),
         }
       )
       const savedType = itemForm.imageType

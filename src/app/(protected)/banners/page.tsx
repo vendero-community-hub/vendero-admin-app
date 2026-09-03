@@ -14,6 +14,8 @@ import {
 import { BannerDashboardShell, type BannerDashboardPaymentOrder } from './banner-dashboard-shell'
 import { BannerEditModal } from './banner-edit-modal'
 import { BannerImageCropFields } from './banner-image-crop-fields'
+import { BannerDetailImageFields } from './banner-detail-image-fields'
+import { BannerVideoFields } from './banner-video-fields'
 
 type BannerStatus = 'draft' | 'pending_review' | 'active' | 'paused' | 'rejected' | 'expired'
 type BannerOwnerType = 'vendor' | 'vendero'
@@ -38,7 +40,9 @@ type Banner = {
   title: string
   subtitle: string | null
   body: string | null
+  imageObjectKey: string
   imageUrl: string
+  videoObjectKey: string | null
   videoUrl: string | null
   ctaLabel: string | null
   actionType: BannerActionType
@@ -79,6 +83,7 @@ type Banner = {
       vendorProfileId: number
       userId: number | null
       name: string | null
+      avatarObjectKey?: string | null
       avatarUrl: string | null
       city: string | null
       views: number
@@ -168,8 +173,8 @@ type BannerPaymentOrderRow = BannerDashboardPaymentOrder & {
 }
 
 type UploadedBannerImage = {
-  url: string
-  key: string | null
+  objectKey: string
+  assetId: string | null
 }
 
 const emptyPricingSettings: PricingSettings = {
@@ -211,7 +216,6 @@ const emptyOverview: BannerOverview = {
   designRequests: [],
 }
 
-const bannerUploadLimitBytes = 10 * 1024 * 1024
 const bannerUploadLimitLabel = '10 MB'
 
 const bannerOnPressActions: Array<{ value: BannerActionType; label: string }> = [
@@ -219,7 +223,7 @@ const bannerOnPressActions: Array<{ value: BannerActionType; label: string }> = 
   { value: 'screen', label: 'App screen' },
   { value: 'external_url', label: 'Outside web link' },
   { value: 'vendor_profile', label: 'Vendor profile' },
-  { value: 'video_screen', label: 'YouTube video screen' },
+  { value: 'video_screen', label: 'Uploaded video screen' },
   { value: 'own_profile', label: 'Own vendor profile' },
   { value: 'direct_chat', label: 'Direct chat' },
   { value: 'group', label: 'Group chat' },
@@ -351,56 +355,31 @@ function parseText(value: FormDataEntryValue | null) {
   return text || null
 }
 
-function getUploadFile(formData: FormData, name: string) {
-  const value = formData.get(name)
-  if (!value || typeof value === 'string') return null
-  if ('size' in value && Number(value.size) > 0) return value as File
-  return null
-}
-
-function validateBannerImageFile(file: File) {
-  if (file.size > bannerUploadLimitBytes) {
-    throw new Error(`Banner image must be ${bannerUploadLimitLabel} or smaller.`)
-  }
-
-  if (file.type && !file.type.startsWith('image/')) {
-    throw new Error('Please upload an image file for the banner.')
-  }
-}
-
 async function uploadBannerImage(formData: FormData) {
-  const file = getUploadFile(formData, 'bannerFile')
-  if (!file) return null
-  validateBannerImageFile(file)
-
-  const uploadFormData = new FormData()
-  uploadFormData.append('scope', 'banner')
-  uploadFormData.append('bannerResizeMode', parseText(formData.get('bannerResizeMode')) ?? 'crop')
-  uploadFormData.append('bannerCropPosition', parseText(formData.get('bannerCropPosition')) ?? 'custom')
-  uploadFormData.append('bannerCropX', String(parseOptionalNumber(formData.get('bannerCropX')) ?? 50))
-  uploadFormData.append('bannerCropY', String(parseOptionalNumber(formData.get('bannerCropY')) ?? 50))
-  uploadFormData.append('file', file)
-
-  const uploaded = await adminRequest('/api/v1/admin/media/upload', {
-    method: 'POST',
-    body: uploadFormData,
-  })
-
-  const url = uploaded?.url ?? uploaded?.fileUrl ?? uploaded?.publicUrl
-  if (typeof url !== 'string' || !url.trim()) return null
-
-  return {
-    url: url.trim(),
-    key: typeof uploaded?.key === 'string' && uploaded.key.trim() ? uploaded.key.trim() : null,
-  } satisfies UploadedBannerImage
+  const objectKey = String(formData.get('bannerObjectKey') ?? '').trim()
+  const assetId = String(formData.get('bannerAssetId') ?? '').trim()
+  if (!objectKey && !assetId) return null
+  if (!objectKey || !assetId || objectKey.includes('://')) {
+    throw new Error('Banner upload did not finish securely. Please choose the image again.')
+  }
+  return { objectKey, assetId } satisfies UploadedBannerImage
 }
 
-async function deleteUploadedMedia(key?: string | null) {
-  if (!key) return
+function selectedBannerVideo(formData: FormData) {
+  const objectKey = String(formData.get('bannerVideoObjectKey') ?? '').trim()
+  const assetId = String(formData.get('bannerVideoAssetId') ?? '').trim() || null
+  if (!objectKey) return null
+  if (objectKey.includes('://')) {
+    throw new Error('Banner video upload did not finish securely. Please choose the video again.')
+  }
+  return { objectKey, assetId } satisfies UploadedBannerImage
+}
 
-  await adminRequest('/api/v1/admin/media', {
+async function deleteUploadedMedia(assetId?: string | null) {
+  if (!assetId) return
+
+  await adminRequest(`/api/v1/admin/media/assets/${encodeURIComponent(assetId)}`, {
     method: 'DELETE',
-    body: JSON.stringify({ key }),
   }).catch(() => null)
 }
 
@@ -460,9 +439,12 @@ function objectValue(value: unknown) {
 
 function buildActionPayload(formData: FormData, actionType: BannerActionType) {
   const basePayload = parseJsonObject(formData.get('actionPayloadJson'), {})
+  delete basePayload.videoUrl
+  delete basePayload.video_url
+  delete basePayload.videoObjectKey
+  delete basePayload.video_object_key
   const screenKey = parseText(formData.get('screenKey'))
   const externalUrl = parseText(formData.get('externalUrl'))
-  const videoUrl = parseText(formData.get('videoUrl'))
   const actionTarget = normalizeActionTarget(parseText(formData.get('actionTarget')))
   const actionTitle = parseText(formData.get('actionTitle'))
 
@@ -475,7 +457,7 @@ function buildActionPayload(formData: FormData, actionType: BannerActionType) {
   }
 
   if (actionType === 'video_screen') {
-    return { ...basePayload, videoUrl: videoUrl ?? basePayload.videoUrl }
+    return basePayload
   }
 
   if (actionType === 'vendor_profile' || actionType === 'direct_chat') {
@@ -511,24 +493,28 @@ function buildActionPayload(formData: FormData, actionType: BannerActionType) {
 
 function buildDetailPayload(formData: FormData) {
   const basePayload = parseJsonObject(formData.get('detailPayloadJson'), {})
+  const cleanPayload = { ...basePayload }
+  delete cleanPayload.images
+  delete cleanPayload.imageUrl
+  delete cleanPayload.imageUrls
   const title = parseText(formData.get('detailTitle'))
   const body = parseText(formData.get('detailBody'))
   const features = parseFeatureLines(formData.get('featureList'))
-  const images = parseTextLines(formData.get('detailImageUrls'))
+  const imageObjectKeys = parseTextList(formData, 'detailImageObjectKeys')
   const ctaUrl = parseText(formData.get('detailCtaUrl')) ?? parseText(formData.get('externalUrl'))
   const ctaScreenKey = parseText(formData.get('detailCtaScreenKey'))
   const ctaLabel = parseText(formData.get('detailCtaLabel')) ?? parseText(formData.get('ctaLabel')) ?? 'Open'
 
   return {
-    ...basePayload,
+    ...cleanPayload,
     ...(title ? { title } : {}),
     ...(body ? { body } : {}),
     ...(features.length ? { features } : {}),
-    ...(images.length ? { images } : {}),
+    imageObjectKeys,
     ...(ctaUrl || ctaScreenKey
       ? {
           cta: {
-            ...objectValue(basePayload.cta),
+            ...objectValue(cleanPayload.cta),
             label: ctaLabel,
             ...(ctaUrl ? { url: ctaUrl } : {}),
             ...(ctaScreenKey
@@ -623,7 +609,7 @@ function bannerActionSummary(banner: Banner) {
   }
 
   if (banner.actionType === 'video_screen') {
-    return `On press: Video${banner.videoUrl || actionPayload.videoUrl ? '' : ' - link not set'}`
+    return `On press: Video${banner.videoObjectKey ? '' : ' - video not set'}`
   }
 
   if (banner.actionType === 'detail_screen') {
@@ -654,9 +640,14 @@ function featureListText(banner: Banner) {
     .join('\n')
 }
 
-function detailImageText(banner: Banner) {
+function detailImageObjectKeys(banner: Banner) {
+  const keys = banner.detailPayload?.imageObjectKeys
+  return Array.isArray(keys) ? keys.map((key) => String(key)).filter(Boolean) : []
+}
+
+function detailImageUrls(banner: Banner) {
   const images = banner.detailPayload?.images
-  return Array.isArray(images) ? images.map((image) => String(image)).join('\n') : ''
+  return Array.isArray(images) ? images.map((image) => String(image)).filter(Boolean) : []
 }
 
 function targetSubscriptionPlanIds(banner: Banner) {
@@ -830,11 +821,11 @@ async function updatePricingSettings(formData: FormData) {
 async function createVenderoBanner(formData: FormData) {
   'use server'
 
-  const videoUrl = parseText(formData.get('videoUrl'))
+  const uploadedVideo = selectedBannerVideo(formData)
   const submittedActionType = String(formData.get('actionType') ?? '').trim() as BannerActionType
   const actionType: BannerActionType = actionTypes.includes(submittedActionType)
     ? submittedActionType
-    : videoUrl
+    : uploadedVideo
       ? 'video_screen'
       : 'detail_screen'
   const uploadedImage = await uploadBannerImage(formData)
@@ -851,8 +842,8 @@ async function createVenderoBanner(formData: FormData) {
         title: `Vendero banner ${new Date().toISOString().slice(0, 10)}`,
         subtitle: null,
         body: null,
-        imageUrl: uploadedImage.url,
-        videoUrl,
+        imageObjectKey: uploadedImage.objectKey,
+        videoObjectKey: actionType === 'video_screen' ? uploadedVideo?.objectKey ?? null : null,
         ctaLabel: parseText(formData.get('ctaLabel')) ?? (actionType === 'video_screen' ? 'Watch' : 'Open'),
         placement: 'home',
         status: 'active',
@@ -879,7 +870,10 @@ async function createVenderoBanner(formData: FormData) {
 
     if (!created) throw new Error('Banner create failed')
   } catch (error) {
-    await deleteUploadedMedia(uploadedImage.key)
+    await Promise.all([
+      deleteUploadedMedia(uploadedImage.assetId),
+      deleteUploadedMedia(uploadedVideo?.assetId),
+    ])
     throw error
   }
 
@@ -914,7 +908,7 @@ async function updateBannerQuickAction(formData: FormData) {
   if (!id) return
   const actionType = String(formData.get('actionType') ?? 'detail_screen') as BannerActionType
   const uploadedImageUrl = await uploadBannerImage(formData)
-  const imageUrl = uploadedImageUrl?.url ?? String(formData.get('imageUrl') ?? '').trim()
+  const uploadedVideo = selectedBannerVideo(formData)
 
   try {
     const updated = await adminRequest(`/api/v1/admin/banners/${id}`, {
@@ -924,8 +918,8 @@ async function updateBannerQuickAction(formData: FormData) {
         title: String(formData.get('title') ?? '').trim(),
         subtitle: parseText(formData.get('subtitle')),
         body: parseText(formData.get('body')),
-        imageUrl,
-        videoUrl: parseText(formData.get('videoUrl')),
+        ...(uploadedImageUrl ? { imageObjectKey: uploadedImageUrl.objectKey } : {}),
+        videoObjectKey: actionType === 'video_screen' ? uploadedVideo?.objectKey ?? null : null,
         ctaLabel: parseText(formData.get('ctaLabel')) ?? 'Open',
         placement: String(formData.get('placement') ?? 'home').trim() || 'home',
         actionType,
@@ -958,7 +952,10 @@ async function updateBannerQuickAction(formData: FormData) {
 
     if (!updated) throw new Error('Banner update failed')
   } catch (error) {
-    await deleteUploadedMedia(uploadedImageUrl?.key)
+    await Promise.all([
+      deleteUploadedMedia(uploadedImageUrl?.assetId),
+      deleteUploadedMedia(uploadedVideo?.assetId),
+    ])
     throw error
   }
 
@@ -1008,21 +1005,23 @@ function BannerOnPressFields({
   defaultExternalUrl = '',
   defaultActionTarget = '',
   defaultActionTitle = '',
-  defaultVideoUrl = '',
+  currentVideoObjectKey = null,
+  currentVideoUrl = null,
 }: {
   defaultActionType?: BannerActionType
   defaultScreenKey?: string
   defaultExternalUrl?: string
   defaultActionTarget?: string
   defaultActionTitle?: string
-  defaultVideoUrl?: string
+  currentVideoObjectKey?: string | null
+  currentVideoUrl?: string | null
 }) {
   return (
     <div className="rounded-md border border-border/70 bg-background/30 p-3 sm:col-span-2">
       <div className="mb-3">
         <FieldLabel>On press action</FieldLabel>
         <p className="mt-1 text-xs text-muted-foreground">
-          Choose where this banner opens when a vendor taps it: app screen, outside web link, vendor profile, video, or banner detail.
+          Choose where this banner opens when a vendor taps it: app screen, outside web link, vendor profile, uploaded video, or banner detail.
         </p>
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
@@ -1066,10 +1065,10 @@ function BannerOnPressFields({
           <FieldLabel>Vendor name</FieldLabel>
           <Input name="actionTitle" defaultValue={defaultActionTitle} placeholder="Optional display name" />
         </div>
-        <div className="space-y-1.5">
-          <FieldLabel>YouTube video link</FieldLabel>
-          <Input name="videoUrl" defaultValue={defaultVideoUrl} placeholder="https://youtube.com/..." />
-        </div>
+        <BannerVideoFields
+          currentObjectKey={currentVideoObjectKey}
+          currentVideoUrl={currentVideoUrl}
+        />
       </div>
     </div>
   )
@@ -1273,7 +1272,6 @@ function BannerEditForm({
       <input type="hidden" name="id" value={banner.publicId} />
       <input type="hidden" name="existingMetadataJson" value={JSON.stringify(banner.metadata ?? {})} />
       <input type="hidden" name="ownerType" value={banner.ownerType} />
-      <input type="hidden" name="imageUrl" value={banner.imageUrl} />
       <input type="hidden" name="placement" value={banner.placement} />
       <input type="hidden" name="ctaLabel" value={banner.ctaLabel ?? 'Open'} />
       <input type="hidden" name="body" value={banner.body ?? ''} />
@@ -1344,7 +1342,8 @@ function BannerEditForm({
                 banner.actionPayload?.title ??
                 banner.actionPayload?.name
             )}
-            defaultVideoUrl={banner.videoUrl ?? formValue(banner.actionPayload?.videoUrl)}
+            currentVideoObjectKey={banner.videoObjectKey}
+            currentVideoUrl={banner.videoUrl}
           />
           <BannerTargetingFields
             subscriptionPlans={subscriptionPlans}
@@ -2000,7 +1999,6 @@ export default async function BannersPage() {
                       <FieldLabel>Subtitle</FieldLabel>
                       <Input name="subtitle" defaultValue={banner.subtitle ?? ''} />
                     </div>
-                    <input type="hidden" name="imageUrl" value={banner.imageUrl} />
                     <BannerImageCropFields
                       label="Replace banner image"
                       currentImageUrl={banner.imageUrl}
@@ -2039,7 +2037,8 @@ export default async function BannersPage() {
                           banner.actionPayload?.title ??
                           banner.actionPayload?.name
                       )}
-                      defaultVideoUrl={banner.videoUrl ?? formValue(banner.actionPayload?.videoUrl)}
+                      currentVideoObjectKey={banner.videoObjectKey}
+                      currentVideoUrl={banner.videoUrl}
                     />
                     <BannerTargetingFields
                       subscriptionPlans={subscriptionPlans}
@@ -2174,15 +2173,10 @@ export default async function BannersPage() {
                         className="min-h-28 w-full rounded-md border border-border bg-background/70 px-3 py-2 text-sm text-foreground outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/15"
                       />
                     </div>
-                    <div className="space-y-1.5">
-                      <FieldLabel>Detail image URLs</FieldLabel>
-                      <textarea
-                        name="detailImageUrls"
-                        rows={5}
-                        defaultValue={detailImageText(banner)}
-                        className="min-h-28 w-full rounded-md border border-border bg-background/70 px-3 py-2 text-sm text-foreground outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/15"
-                      />
-                    </div>
+                    <BannerDetailImageFields
+                      objectKeys={detailImageObjectKeys(banner)}
+                      urls={detailImageUrls(banner)}
+                    />
                     <div className="space-y-1.5">
                       <FieldLabel>Detail CTA label</FieldLabel>
                       <Input name="detailCtaLabel" defaultValue={formValue(objectValue(banner.detailPayload?.cta).label)} />

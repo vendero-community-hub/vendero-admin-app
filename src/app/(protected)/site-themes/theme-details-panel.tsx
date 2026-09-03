@@ -21,6 +21,7 @@ import {
 } from "./site-themes-panel";
 import { whiteLabelWebUrl } from "@/lib/environment";
 import { fixedComponentForKey } from "@/lib/site-fixed-components";
+import { uploadAdminMedia } from "@/lib/trusted-media";
 
 type ThemeWizardStep = "details" | "settings";
 
@@ -33,7 +34,8 @@ type AddonForm = {
 type ThemeDetailsForm = {
   slug: string;
   name: string;
-  bannerImages: string;
+  bannerImageObjectKeys: string;
+  bannerImageUrls: string;
   themeType: string;
   rendererKey: string;
   shortDescription: string;
@@ -230,7 +232,11 @@ function formFromTheme(theme?: SiteTheme | null): ThemeDetailsForm {
   const userEditable = arrayFrom(supportedSettings.userEditable).filter(
     (item): item is string => typeof item === "string",
   );
-  const bannerImages = arrayFrom(metadata.bannerImages).filter(
+  const bannerImageObjectKeys = arrayFrom(metadata.bannerImageObjectKeys).filter(
+    (item): item is string =>
+      typeof item === "string" && item.trim().length > 0,
+  );
+  const bannerImageUrls = arrayFrom(metadata.bannerImageUrls).filter(
     (item): item is string =>
       typeof item === "string" && item.trim().length > 0,
   );
@@ -250,8 +256,14 @@ function formFromTheme(theme?: SiteTheme | null): ThemeDetailsForm {
   return {
     slug: theme?.slug ?? "",
     name: theme?.name ?? "",
-    bannerImages: (bannerImages.length
-      ? bannerImages
+    bannerImageObjectKeys: (bannerImageObjectKeys.length
+      ? bannerImageObjectKeys
+      : [theme?.previewImageObjectKey]
+    )
+      .filter(Boolean)
+      .join("\n"),
+    bannerImageUrls: (bannerImageUrls.length
+      ? bannerImageUrls
       : [theme?.previewImageUrl]
     )
       .filter(Boolean)
@@ -291,7 +303,7 @@ function addonPayload(addons: AddonForm[]) {
 }
 
 function buildThemePayload(form: ThemeDetailsForm) {
-  const bannerImages = lines(form.bannerImages);
+  const bannerImageObjectKeys = lines(form.bannerImageObjectKeys);
   const slug = form.slug.trim() || slugFromName(form.name);
   const selectedOptions = form.customizationOptions;
   const addonServices = addonPayload(form.addonServices);
@@ -313,7 +325,7 @@ function buildThemePayload(form: ThemeDetailsForm) {
     shortDescription: form.shortDescription.trim() || null,
     description: form.description.trim() || null,
     previewUrl: whiteLabelWebUrl(`/preview/site?themeSlug=${slug}&path=/`),
-    previewImageUrl: bannerImages[0] ?? null,
+    previewImageObjectKey: bannerImageObjectKeys[0] ?? null,
     oneTimePrice: Number(form.oneTimePrice || 0),
     currency: form.currency.trim() || "INR",
     subscriptionHostingIncluded: true,
@@ -334,8 +346,8 @@ function buildThemePayload(form: ThemeDetailsForm) {
         seo: selectedOptions.includes("seo"),
       },
       assets: {
-        bannerImages,
-        carouselEnabled: bannerImages.length > 1,
+        bannerImageObjectKeys,
+        carouselEnabled: bannerImageObjectKeys.length > 1,
       },
     },
     supportedSettings: {
@@ -349,13 +361,13 @@ function buildThemePayload(form: ThemeDetailsForm) {
       ],
     },
     assetSchema: {
-      logoUrl: { type: "image", label: "Logo" },
-      bannerImages: {
+      logoObjectKey: { type: "image", label: "Logo" },
+      bannerImageObjectKeys: {
         type: "image-list",
         label: "Banner images",
-        carousel: bannerImages.length > 1,
+        carousel: bannerImageObjectKeys.length > 1,
       },
-      shareImageUrl: { type: "image", label: "SEO share image" },
+      shareImageObjectKey: { type: "image", label: "SEO share image" },
     },
     componentSchema: {
       components: defaultComponents.map((component) => component.componentKey),
@@ -364,7 +376,7 @@ function buildThemePayload(form: ThemeDetailsForm) {
     pageSchema,
     addonServices,
     metadata: {
-      bannerImages,
+      bannerImageObjectKeys,
       testVendorIds: lines(form.testVendorIds),
       customizationOptions: selectedOptions,
       generatedBy: "theme-detail-wizard",
@@ -452,9 +464,13 @@ export function ThemeDetailsPanel({
   );
   const isEditing = Boolean(theme);
 
-  const bannerImages = useMemo(
-    () => lines(form.bannerImages),
-    [form.bannerImages],
+  const bannerImageObjectKeys = useMemo(
+    () => lines(form.bannerImageObjectKeys),
+    [form.bannerImageObjectKeys],
+  );
+  const bannerImageUrls = useMemo(
+    () => lines(form.bannerImageUrls),
+    [form.bannerImageUrls],
   );
   const selectedTestVendorIds = useMemo(
     () => lines(form.testVendorIds),
@@ -478,6 +494,56 @@ export function ThemeDetailsPanel({
           : [...current.customizationOptions, key],
       };
     });
+  }
+
+  async function uploadThemeBanners(files: FileList | null) {
+    if (!files?.length) return;
+    setWorking(true);
+    setMessage("Uploading theme images…");
+    const uploaded: Array<{ id: string; objectKey: string; url: string | null }> = [];
+    try {
+      for (const file of Array.from(files).slice(0, 12)) {
+        const asset = await uploadAdminMedia(file, "platform.site-theme-asset");
+        uploaded.push({ id: asset.id, objectKey: asset.objectKey, url: asset.url });
+      }
+      setForm((current) => ({
+        ...current,
+        bannerImageObjectKeys: [
+          ...lines(current.bannerImageObjectKeys),
+          ...uploaded.map((asset) => asset.objectKey),
+        ].join("\n"),
+        bannerImageUrls: [
+          ...lines(current.bannerImageUrls),
+          ...uploaded.map((asset) => asset.url).filter((value): value is string => Boolean(value)),
+        ].join("\n"),
+      }));
+      setMessage(`${uploaded.length} theme image${uploaded.length === 1 ? "" : "s"} uploaded.`);
+    } catch (error) {
+      await Promise.all(
+        uploaded.map((asset) =>
+          requestJson(
+            `/api/v1/admin/media/assets/${encodeURIComponent(asset.id)}`,
+            undefined,
+            "DELETE",
+          ).catch(() => null),
+        ),
+      );
+      setMessage(error instanceof Error ? error.message : "Unable to upload theme images");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  function removeThemeBanner(index: number) {
+    setForm((current) => ({
+      ...current,
+      bannerImageObjectKeys: lines(current.bannerImageObjectKeys)
+        .filter((_, itemIndex) => itemIndex !== index)
+        .join("\n"),
+      bannerImageUrls: lines(current.bannerImageUrls)
+        .filter((_, itemIndex) => itemIndex !== index)
+        .join("\n"),
+    }));
   }
 
   function updateAddon(index: number, patch: Partial<AddonForm>) {
@@ -610,21 +676,32 @@ export function ThemeDetailsPanel({
                 }
               />
             </div>
-            <textarea
-              className="min-h-24 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-              placeholder="Banner image URLs from Media Assets, one per line. Multiple images become carousel assets."
-              value={form.bannerImages}
-              onChange={(event) => setField("bannerImages", event.target.value)}
-            />
-            {bannerImages.length ? (
+            <label className="grid gap-2 text-sm font-medium text-muted-foreground">
+              <span>Theme banner images</span>
+              <Input
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                multiple
+                disabled={working}
+                onChange={(event) => {
+                  void uploadThemeBanners(event.target.files);
+                  event.target.value = "";
+                }}
+              />
+            </label>
+            {bannerImageUrls.length ? (
               <div className="grid gap-2 md:grid-cols-3">
-                {bannerImages.slice(0, 3).map((image) => (
-                  <img
-                    key={image}
-                    src={image}
-                    alt=""
-                    className="h-24 w-full rounded-lg border border-border object-cover"
-                  />
+                {bannerImageUrls.map((image, index) => (
+                  <div key={`${bannerImageObjectKeys[index] ?? image}-${index}`} className="space-y-2">
+                    <img
+                      src={image}
+                      alt=""
+                      className="h-24 w-full rounded-lg border border-border object-cover"
+                    />
+                    <Button type="button" size="sm" variant="outline" onClick={() => removeThemeBanner(index)}>
+                      Remove
+                    </Button>
+                  </div>
                 ))}
               </div>
             ) : null}

@@ -12,8 +12,7 @@ import { AdminLogoutButton } from '@/components/admin-session-actions'
 
 type Stage = 'request' | 'verify'
 
-const VENDERO_LOGO_URL =
-  'https://pub-62b8d9a00e0749d5a58a987a7c20cebc.r2.dev/app/assets/logo-white.svg'
+const VENDERO_LOGO_URL = '/logo-white.svg'
 const SHOW_DEV_OTP = APP_ENV === 'dev'
 
 function formatCooldown(seconds: number) {

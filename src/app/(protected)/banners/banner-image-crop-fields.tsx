@@ -3,6 +3,7 @@
 import * as React from 'react'
 import { CheckCircle2, Crop, Maximize2, Move, UploadCloud, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { uploadAdminMedia } from '@/lib/trusted-media'
 
 type BannerImageCropFieldsProps = {
   label?: string
@@ -68,6 +69,59 @@ function getImageDetails(image: HTMLImageElement): ImageDetails {
   }
 }
 
+async function renderFinalBanner(
+  file: File,
+  mode: 'crop' | 'resize',
+  crop: { x: number; y: number },
+) {
+  const bitmap = await createImageBitmap(file)
+  try {
+    const canvas = document.createElement('canvas')
+    canvas.width = requiredWidth
+    canvas.height = requiredHeight
+    const context = canvas.getContext('2d')
+    if (!context) throw new Error('Banner crop is unavailable in this browser.')
+    if (mode === 'resize') {
+      context.drawImage(bitmap, 0, 0, bitmap.width, bitmap.height, 0, 0, requiredWidth, requiredHeight)
+    } else {
+      const targetRatio = requiredWidth / requiredHeight
+      const sourceRatio = bitmap.width / bitmap.height
+      let sourceX = 0
+      let sourceY = 0
+      let sourceWidth = bitmap.width
+      let sourceHeight = bitmap.height
+      if (sourceRatio > targetRatio) {
+        sourceWidth = bitmap.height * targetRatio
+        sourceX = (bitmap.width - sourceWidth) * (crop.x / 100)
+      } else if (sourceRatio < targetRatio) {
+        sourceHeight = bitmap.width / targetRatio
+        sourceY = (bitmap.height - sourceHeight) * (crop.y / 100)
+      }
+      context.drawImage(
+        bitmap,
+        sourceX,
+        sourceY,
+        sourceWidth,
+        sourceHeight,
+        0,
+        0,
+        requiredWidth,
+        requiredHeight,
+      )
+    }
+    const blob = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob(
+        (value) => value ? resolve(value) : reject(new Error('Unable to create the final banner image.')),
+        'image/webp',
+        0.9,
+      )
+    })
+    return new File([blob], `banner-${Date.now()}.webp`, { type: 'image/webp' })
+  } finally {
+    bitmap.close()
+  }
+}
+
 export function BannerImageCropFields({
   label = 'Upload banner',
   required = false,
@@ -78,14 +132,42 @@ export function BannerImageCropFields({
   defaultCropX,
   defaultCropY,
 }: BannerImageCropFieldsProps) {
-  const [mode, setMode] = React.useState(defaultMode === 'resize' ? 'resize' : 'crop')
+  const [mode, setMode] = React.useState<'crop' | 'resize'>(defaultMode === 'resize' ? 'resize' : 'crop')
   const [crop, setCrop] = React.useState(() => initialCrop(defaultCropPosition, defaultCropX, defaultCropY))
   const [previewUrl, setPreviewUrl] = React.useState<string | null>(null)
   const [fileName, setFileName] = React.useState('')
   const [details, setDetails] = React.useState<ImageDetails | null>(null)
   const [cropModalOpen, setCropModalOpen] = React.useState(false)
   const [dragging, setDragging] = React.useState(false)
+  const [selectedFile, setSelectedFile] = React.useState<File | null>(null)
+  const [uploadedAsset, setUploadedAsset] = React.useState<{
+    id: string
+    objectKey: string
+    url: string
+  } | null>(null)
+  const [uploading, setUploading] = React.useState(false)
+  const [uploadError, setUploadError] = React.useState('')
   const objectUrlRef = React.useRef<string | null>(null)
+
+  const prepareUpload = React.useCallback(async (
+    file: File,
+    selectedMode: 'crop' | 'resize',
+    selectedCrop: { x: number; y: number },
+  ) => {
+    setUploading(true)
+    setUploadError('')
+    setUploadedAsset(null)
+    try {
+      const finalFile = await renderFinalBanner(file, selectedMode, selectedCrop)
+      const asset = await uploadAdminMedia(finalFile, 'platform.banner')
+      if (!asset.url) throw new Error('The public banner URL was not returned.')
+      setUploadedAsset({ id: asset.id, objectKey: asset.objectKey, url: asset.url })
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : 'Unable to upload banner image.')
+    } finally {
+      setUploading(false)
+    }
+  }, [])
 
   React.useEffect(() => {
     return () => {
@@ -110,6 +192,9 @@ export function BannerImageCropFields({
 
     setDetails(null)
     setFileName(file?.name ?? '')
+    setSelectedFile(file ?? null)
+    setUploadedAsset(null)
+    setUploadError('')
     setCropModalOpen(false)
 
     if (!file) {
@@ -128,9 +213,10 @@ export function BannerImageCropFields({
       setCrop({ x: 50, y: 50 })
       setMode(nextDetails.ratioMatches ? 'crop' : 'crop')
       if (!nextDetails.ratioMatches) setCropModalOpen(true)
+      else void prepareUpload(file, 'crop', { x: 50, y: 50 })
     }
     image.src = nextUrl
-  }, [])
+  }, [prepareUpload])
 
   const roundedX = Math.round(crop.x)
   const roundedY = Math.round(crop.y)
@@ -147,17 +233,26 @@ export function BannerImageCropFields({
       : `Required banner frame: ${requiredWidth} x ${requiredHeight} px.`
 
   return (
-    <div className="space-y-3 sm:col-span-2">
+    <div
+      className="space-y-3 sm:col-span-2"
+      onSubmitCapture={(event) => {
+        if (uploading || (selectedFile && !uploadedAsset) || (required && !currentImageUrl && !uploadedAsset)) {
+          event.preventDefault()
+          setUploadError(uploading ? 'Wait for the banner upload to finish.' : 'Prepare a valid banner image first.')
+        }
+      }}
+    >
       <input type="hidden" name="bannerResizeMode" value={mode} />
       <input type="hidden" name="bannerCropPosition" value={needsAdjustment && mode === 'crop' ? 'custom' : 'centre'} />
       <input type="hidden" name="bannerCropX" value={String(roundedX)} />
       <input type="hidden" name="bannerCropY" value={String(roundedY)} />
+      <input type="hidden" name="bannerAssetId" value={uploadedAsset?.id ?? ''} />
+      <input type="hidden" name="bannerObjectKey" value={uploadedAsset?.objectKey ?? ''} />
 
       <div className="space-y-1.5">
         <label className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">{label}</label>
         <label className="relative block cursor-pointer rounded-lg border border-dashed border-border bg-background/35 p-5 transition hover:border-primary/60 hover:bg-primary/5">
           <input
-            name="bannerFile"
             type="file"
             accept="image/*"
             required={required}
@@ -182,6 +277,9 @@ export function BannerImageCropFields({
           </div>
         </label>
         {helperText ? <p className="text-xs text-muted-foreground">{helperText}</p> : null}
+        {uploading ? <p className="text-xs text-primary">Preparing and uploading the final 1200 × 500 banner…</p> : null}
+        {uploadedAsset ? <p className="text-xs text-emerald-600">Banner securely uploaded and ready.</p> : null}
+        {uploadError ? <p className="text-xs text-destructive">{uploadError}</p> : null}
       </div>
 
       {previewUrl ? (
@@ -347,8 +445,17 @@ export function BannerImageCropFields({
             </div>
 
             <div className="flex justify-end gap-2 border-t border-border px-5 py-4">
-              <Button type="button" variant="outline" onClick={() => setCropModalOpen(false)}>
-                Apply
+              <Button
+                type="button"
+                variant="outline"
+                disabled={uploading}
+                onClick={async () => {
+                  if (!selectedFile) return
+                  await prepareUpload(selectedFile, mode, crop)
+                  setCropModalOpen(false)
+                }}
+              >
+                {uploading ? 'Uploading…' : 'Apply and upload'}
               </Button>
             </div>
           </div>

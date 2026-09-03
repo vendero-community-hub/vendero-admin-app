@@ -34,9 +34,15 @@ type StorageFile = {
   folder: string
   scope: string | null
   ownerId: number | null
+  ownerType: string
+  visibility: string
+  status: string
+  scanStatus: string
+  scanErrorCode: string | null
   sizeBytes: number
   lastModified: string | null
   url: string | null
+  orphan: boolean
   used: boolean
   usageCount: number
   usages: StorageUsage[]
@@ -62,6 +68,17 @@ type StorageOverview = {
     truncated: boolean
     maxObjects: number
   }
+  registry: {
+    statuses: Array<{ status: string; count: number; bytes: number }>
+    owners: Array<{
+      ownerType: string
+      vendorProfileId: number | null
+      count: number
+      bytes: number
+    }>
+    scanFailures: number
+    orphans: number
+  }
   folders: FolderSummary[]
   files: StorageFile[]
 }
@@ -69,7 +86,7 @@ type StorageOverview = {
 const fallbackOverview: StorageOverview = {
   generatedAt: new Date().toISOString(),
   bucket: 'not connected',
-  prefix: 'uploads/',
+  prefix: 'v1/',
   limit: 100,
   nextContinuationToken: null,
   isTruncated: false,
@@ -78,6 +95,12 @@ const fallbackOverview: StorageOverview = {
     sizeBytes: 0,
     truncated: false,
     maxObjects: 0,
+  },
+  registry: {
+    statuses: [],
+    owners: [],
+    scanFailures: 0,
+    orphans: 0,
   },
   folders: [],
   files: [],
@@ -117,16 +140,16 @@ async function adminRequest(path: string, init?: RequestInit) {
 }
 
 async function getStorageData(params: Record<string, string | string[] | undefined>) {
-  const prefix = singleParam(params.prefix) ?? 'uploads/'
+  const prefix = singleParam(params.prefix)
   const cursor = singleParam(params.cursor)
   const limit = singleParam(params.limit) ?? '100'
   const folderScanLimit = singleParam(params.folderScanLimit) ?? '5000'
   const search = new URLSearchParams({
-    prefix,
     limit,
     includeUsage: 'true',
     folderScanLimit,
   })
+  if (prefix) search.set('prefix', prefix)
   if (cursor) search.set('continuationToken', cursor)
 
   try {
@@ -140,13 +163,12 @@ async function deleteStorageFile(formData: FormData) {
   'use server'
 
   const key = String(formData.get('key') ?? '').trim()
-  const force = String(formData.get('force') ?? '') === 'true'
   if (!key) return
 
   await adminRequest('/api/v1/admin/storage', {
     method: 'DELETE',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ key, force }),
+    body: JSON.stringify({ key }),
   })
   revalidatePath('/storage')
 }
@@ -188,7 +210,7 @@ export default async function StoragePage({
   const overview = await getStorageData(params)
   const usedFiles = overview.files.filter((file) => file.used)
   const unusedFiles = overview.files.length - usedFiles.length
-  const currentPrefix = singleParam(params.prefix) ?? overview.prefix ?? 'uploads/'
+  const currentPrefix = singleParam(params.prefix) ?? overview.prefix ?? 'v1/'
   const currentLimit = singleParam(params.limit) ?? String(overview.limit ?? 100)
   const folderScanLimit = singleParam(params.folderScanLimit) ?? String(overview.scanned.maxObjects || 5000)
 
@@ -202,8 +224,8 @@ export default async function StoragePage({
             </Badge>
             <CardTitle className="text-3xl">Cloudflare storage audit</CardTitle>
             <CardDescription className="max-w-3xl text-sm leading-7">
-              Browse R2 folders and files, review storage usage, see whether an upload is linked to
-              any app resource, and delete objects from Cloudflare storage.
+              Review trusted media records, ownership, scan state, registered resource links, and
+              assets waiting for lifecycle deletion.
             </CardDescription>
           </CardHeader>
         </Card>
@@ -219,7 +241,7 @@ export default async function StoragePage({
               <p className="mt-1 text-2xl font-semibold">{overview.scanned.objectCount}</p>
             </div>
             <div className="rounded-xl border border-border/70 bg-background/30 p-3">
-              <p className="text-muted-foreground">Space</p>
+              <p className="text-muted-foreground">Registry bytes</p>
               <p className="mt-1 text-2xl font-semibold">{formatBytes(overview.scanned.sizeBytes)}</p>
             </div>
             <div className="rounded-xl border border-border/70 bg-background/30 p-3">
@@ -246,7 +268,7 @@ export default async function StoragePage({
               <CheckCircle2 className="h-4 w-4 text-emerald-300" />
               Unused
             </CardTitle>
-            <CardDescription>{unusedFiles} files on this page are not linked in scanned resources.</CardDescription>
+            <CardDescription>{unusedFiles} assets on this page have no registered resource links.</CardDescription>
           </CardHeader>
         </Card>
         <Card className="border-border/70 bg-card/80">
@@ -255,7 +277,7 @@ export default async function StoragePage({
               <ShieldAlert className="h-4 w-4 text-amber-300" />
               Used
             </CardTitle>
-            <CardDescription>{usedFiles.length} files still appear in database resources.</CardDescription>
+            <CardDescription>{usedFiles.length} assets have registered resource links.</CardDescription>
           </CardHeader>
         </Card>
         <Card className="border-border/70 bg-card/80">
@@ -265,9 +287,11 @@ export default async function StoragePage({
               Scan Limit
             </CardTitle>
             <CardDescription>
-              {overview.scanned.truncated
-                ? `Folder totals are limited to ${overview.scanned.maxObjects} objects.`
-                : 'Folder totals include the scanned prefix.'}
+              {overview.registry.scanFailures > 0
+                ? `${overview.registry.scanFailures} asset scans need attention.`
+                : overview.scanned.truncated
+                  ? `Folder totals are limited to ${overview.scanned.maxObjects} assets.`
+                  : 'No failed or infected scans are registered.'}
             </CardDescription>
           </CardHeader>
         </Card>
@@ -276,11 +300,11 @@ export default async function StoragePage({
       <Card className="border-border/70 bg-card/80">
         <CardHeader>
           <CardTitle>Storage Filters</CardTitle>
-          <CardDescription>Open a folder prefix or search another upload path.</CardDescription>
+          <CardDescription>Open a trusted key prefix inside the active deployment environment.</CardDescription>
         </CardHeader>
         <CardContent>
           <form className="grid gap-3 md:grid-cols-[1fr_140px_170px_auto]" action="/storage">
-            <Input name="prefix" defaultValue={currentPrefix} placeholder="uploads/banner/" />
+            <Input name="prefix" defaultValue={currentPrefix} placeholder="v1/prod/vendors/" />
             <Input name="limit" defaultValue={currentLimit} inputMode="numeric" />
             <Input name="folderScanLimit" defaultValue={folderScanLimit} inputMode="numeric" />
             <Button type="submit">
@@ -295,7 +319,7 @@ export default async function StoragePage({
         <Card className="border-border/70 bg-card/80">
           <CardHeader>
             <CardTitle>Folders</CardTitle>
-            <CardDescription>Aggregated from the scanned object set.</CardDescription>
+            <CardDescription>Aggregated from registered media assets.</CardDescription>
           </CardHeader>
           <CardContent className="max-h-[640px] space-y-2 overflow-auto pr-1">
             {overview.folders.length ? (
@@ -333,7 +357,7 @@ export default async function StoragePage({
           <CardHeader className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
             <div>
               <CardTitle>Files</CardTitle>
-              <CardDescription>Usage is checked against resource URL, media, metadata, and settings columns.</CardDescription>
+              <CardDescription>Links come from the media registry rather than a database text scan.</CardDescription>
             </div>
             {overview.nextContinuationToken ? (
               <Button asChild variant="outline" size="sm">
@@ -363,13 +387,20 @@ export default async function StoragePage({
                           {file.used ? `${file.usageCount} linked` : 'Not linked'}
                         </Badge>
                         {file.scope ? <Badge variant="outline">{file.scope}</Badge> : null}
+                        <Badge variant="outline">{file.visibility}</Badge>
+                        <Badge variant="outline">{file.status}</Badge>
+                        <Badge variant="outline">scan: {file.scanStatus}</Badge>
                       </div>
                       <p className="break-all font-mono text-xs text-muted-foreground">{file.key}</p>
                       <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
                         <span>{formatBytes(file.sizeBytes)}</span>
                         <span>{formatDate(file.lastModified)}</span>
                         <span className="break-all">Folder: {file.folder || 'root'}</span>
-                        {file.ownerId !== null ? <span>Owner user: {file.ownerId}</span> : null}
+                        <span>
+                          Owner: {file.ownerType}
+                          {file.ownerId !== null ? ` vendor ${file.ownerId}` : ''}
+                        </span>
+                        {file.scanErrorCode ? <span>Scan error: {file.scanErrorCode}</span> : null}
                       </div>
                     </div>
                     <div className="flex shrink-0 flex-wrap gap-2">
@@ -383,7 +414,6 @@ export default async function StoragePage({
                       ) : null}
                       <DeleteStorageFileForm
                         fileKey={file.key}
-                        force={file.used}
                         usageCount={file.usageCount}
                         action={deleteStorageFile}
                       />

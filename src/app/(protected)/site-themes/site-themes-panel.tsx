@@ -69,6 +69,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { uploadAdminMedia as uploadTrustedAdminMedia } from "@/lib/trusted-media";
 import { HtmlCodePreview } from "./html-code-preview";
 import { SiteComponentPreview } from "./site-component-preview";
 import {
@@ -79,6 +80,7 @@ import {
 import {
   THEME_DATA_SCHEMA_VERSION,
   defaultDataFieldsForThemeDataset,
+  normalizeThemeDataFieldKey,
   normalizeThemeDataKey,
   previewItemsForThemeDataset,
   themeDataDefinitionForKey,
@@ -126,6 +128,7 @@ export type SiteTheme = {
   shortDescription: string | null;
   description: string | null;
   previewUrl: string | null;
+  previewImageObjectKey: string | null;
   previewImageUrl: string | null;
   figmaFileKey: string | null;
   figmaNodeId: string | null;
@@ -604,7 +607,7 @@ type ThemeForm = {
   shortDescription: string;
   description: string;
   previewUrl: string;
-  previewImageUrl: string;
+  previewImageObjectKey: string;
   figmaFileKey: string;
   figmaNodeId: string;
   oneTimePrice: string;
@@ -688,6 +691,7 @@ type BuilderLayout = {
   marginBottom: string;
   backgroundColor: string;
   backgroundGradient: string;
+  backgroundImageObjectKey: string;
   backgroundImageUrl: string;
   alignItems: "stretch" | "start" | "center" | "end";
   justifyContent: "start" | "center" | "space-between";
@@ -696,6 +700,7 @@ type BuilderLayout = {
 type PageDesignSettings = {
   backgroundColor: string;
   textColor: string;
+  backgroundImageObjectKey: string;
   backgroundImageUrl: string;
   minHeight: string;
 };
@@ -735,7 +740,9 @@ type ComponentContentDraft = {
   title: string;
   subtitle: string;
   actionLabel: string;
+  imageObjectKey: string;
   imageUrl: string;
+  logoImageObjectKey: string;
   logoImageUrl: string;
   logoText: string;
   headerBackgroundColor: string;
@@ -773,6 +780,7 @@ type ComponentContentDraft = {
   resultPathTemplate: string;
   componentBackgroundColor: string;
   componentBackgroundGradient: string;
+  componentBackgroundImageObjectKey: string;
   componentBackgroundImageUrl: string;
   componentTextColor: string;
   componentPadding: string;
@@ -821,7 +829,7 @@ const emptyThemeForm: ThemeForm = {
   shortDescription: "",
   description: "",
   previewUrl: "",
-  previewImageUrl: "",
+  previewImageObjectKey: "",
   figmaFileKey: "",
   figmaNodeId: "",
   oneTimePrice: "0",
@@ -941,22 +949,15 @@ export async function requestJson(
   return unwrapPayload(payload);
 }
 
-async function uploadAdminMedia(formData: FormData) {
-  const token = getAdminToken();
-  const response = await fetch("/api/v1/admin/media/upload", {
-    method: "POST",
-    headers: {
-      authorization: token ? `Bearer ${token}` : "",
-    },
-    body: formData,
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(
-      requestErrorMessage(payload, response.statusText || "Upload failed"),
-    );
-  }
-  return unwrapPayload(payload);
+async function uploadAdminMedia(file: File) {
+  const asset = await uploadTrustedAdminMedia(file, "platform.site-theme-asset");
+  return {
+    id: asset.id,
+    objectKey: asset.objectKey,
+    key: asset.objectKey,
+    url: asset.url,
+    fileUrl: asset.url,
+  };
 }
 
 function jsonText(value: unknown) {
@@ -1037,6 +1038,7 @@ function defaultBuilderLayout(): BuilderLayout {
     marginBottom: "",
     backgroundColor: "",
     backgroundGradient: "",
+    backgroundImageObjectKey: "",
     backgroundImageUrl: "",
     alignItems: "stretch",
     justifyContent: "start",
@@ -1078,6 +1080,7 @@ function builderLayoutFrom(value: unknown): BuilderLayout {
     marginBottom: stringFromUnknown(record.marginBottom),
     backgroundColor: stringFromUnknown(record.backgroundColor),
     backgroundGradient: stringFromUnknown(record.backgroundGradient),
+    backgroundImageObjectKey: stringFromUnknown(record.backgroundImageObjectKey),
     backgroundImageUrl: stringFromUnknown(record.backgroundImageUrl),
     alignItems: optionFromUnknown(
       record.alignItems,
@@ -1137,13 +1140,31 @@ function builderStateFromSettings(settingsSchema: string): BuilderState {
   };
 }
 
+function stripDerivedThemeMediaUrls(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripDerivedThemeMediaUrls);
+  if (!value || typeof value !== "object") return value;
+  const output: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    if (
+      /(?:avatar|backgroundImage|banner|coverImage|file|image|logo|media|photo|receipt|signature|thumbnail|video)(?:Url|Urls)$/u.test(
+        key,
+      ) ||
+      key === "bannerImages"
+    ) {
+      continue;
+    }
+    output[key] = stripDerivedThemeMediaUrls(item);
+  }
+  return output;
+}
+
 function settingsWithBuilderState(settingsSchema: string, builderState: BuilderState) {
   const settings = recordFromUnknown(parseJson(settingsSchema, {}));
   return JSON.stringify(
-    {
+    stripDerivedThemeMediaUrls({
       ...settings,
       builder: builderState,
-    },
+    }),
     null,
     2,
   );
@@ -1155,6 +1176,7 @@ function pageDesignFromSettings(settingsSchema: string): PageDesignSettings {
   return {
     backgroundColor: stringFromUnknown(design.backgroundColor),
     textColor: stringFromUnknown(design.textColor),
+    backgroundImageObjectKey: stringFromUnknown(design.backgroundImageObjectKey),
     backgroundImageUrl: stringFromUnknown(design.backgroundImageUrl),
     minHeight: stringFromUnknown(design.minHeight),
   };
@@ -1166,10 +1188,10 @@ function settingsWithPageDesign(
 ) {
   const settings = recordFromUnknown(parseJson(settingsSchema, {}));
   return JSON.stringify(
-    {
+    stripDerivedThemeMediaUrls({
       ...settings,
       pageDesign,
-    },
+    }),
     null,
     2,
   );
@@ -1421,7 +1443,9 @@ function componentContentDraftFrom(
     title: stringFromUnknown(props.title, component?.name ?? ""),
     subtitle: stringFromUnknown(props.subtitle),
     actionLabel: stringFromUnknown(props.actionLabel),
+    imageObjectKey: stringFromUnknown(props.imageObjectKey),
     imageUrl: stringFromUnknown(props.imageUrl),
+    logoImageObjectKey: stringFromUnknown(props.logoImageObjectKey ?? props.logoObjectKey),
     logoImageUrl: stringFromUnknown(props.logoImageUrl ?? props.logoUrl),
     logoText: stringFromUnknown(props.logoText),
     headerBackgroundColor: stringFromUnknown(props.headerBackgroundColor),
@@ -1486,6 +1510,9 @@ function componentContentDraftFrom(
     resultPathTemplate: stringFromUnknown(props.resultPathTemplate, "/cab/{pickup}-to-{drop}"),
     componentBackgroundColor: stringFromUnknown(props.componentBackgroundColor),
     componentBackgroundGradient: stringFromUnknown(props.componentBackgroundGradient),
+    componentBackgroundImageObjectKey: stringFromUnknown(
+      props.componentBackgroundImageObjectKey,
+    ),
     componentBackgroundImageUrl: stringFromUnknown(props.componentBackgroundImageUrl),
     componentTextColor: stringFromUnknown(props.componentTextColor),
     componentPadding: stringFromUnknown(props.componentPadding),
@@ -1628,7 +1655,16 @@ function componentDataItemsFromDraft(draft: ComponentContentDraft) {
 }
 
 function componentDefaultPropsFromDraft(draft: ComponentContentDraft) {
-  const { dataFieldsJson, dataItemsJson, distanceRangesJson, navigationLinksJson, ...contentDraft } = draft;
+  const {
+    dataFieldsJson,
+    dataItemsJson,
+    distanceRangesJson,
+    navigationLinksJson,
+    imageUrl: _imageUrl,
+    logoImageUrl: _logoImageUrl,
+    componentBackgroundImageUrl: _componentBackgroundImageUrl,
+    ...contentDraft
+  } = draft;
   const dataRequirements = componentDataRequirementsFromDraft(draft);
   const dataItems = componentDataItemsFromDraft(draft);
   const distanceRanges = parseJson(distanceRangesJson, []);
@@ -1713,7 +1749,7 @@ function formFromTheme(theme: SiteTheme): ThemeForm {
     shortDescription: theme.shortDescription ?? "",
     description: theme.description ?? "",
     previewUrl: theme.previewUrl ?? "",
-    previewImageUrl: theme.previewImageUrl ?? "",
+    previewImageObjectKey: theme.previewImageObjectKey ?? "",
     figmaFileKey: theme.figmaFileKey ?? "",
     figmaNodeId: theme.figmaNodeId ?? "",
     oneTimePrice: String(theme.oneTimePrice ?? 0),
@@ -2087,12 +2123,56 @@ function GradientPickerField({
   );
 }
 
+function TrustedThemeImageField({
+  label,
+  url,
+  disabled,
+  onSelect,
+  onClear,
+}: {
+  label: string;
+  url: string;
+  disabled?: boolean;
+  onSelect: (file: File) => void;
+  onClear: () => void;
+}) {
+  return (
+    <div className="grid gap-2 rounded-md border border-border/70 bg-background/30 p-2">
+      <span className="text-xs font-semibold text-muted-foreground">{label}</span>
+      {url ? (
+        <img src={url} alt="" className="h-20 w-full rounded-md object-cover" />
+      ) : null}
+      <div className="flex items-center gap-2">
+        <Input
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          disabled={disabled}
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            event.target.value = "";
+            if (file) onSelect(file);
+          }}
+        />
+        {url ? (
+          <Button type="button" size="sm" variant="outline" onClick={onClear}>
+            Clear
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function LayoutSettingsFields({
   layout,
   onChange,
+  onImageSelect,
+  disabled,
 }: {
   layout: BuilderLayout;
   onChange: (patch: Partial<BuilderLayout>) => void;
+  onImageSelect: (file: File) => void;
+  disabled?: boolean;
 }) {
   return (
     <div className="space-y-2">
@@ -2182,10 +2262,14 @@ function LayoutSettingsFields({
           value={layout.backgroundGradient}
           onChange={(backgroundGradient) => onChange({ backgroundGradient })}
         />
-        <Input
-          placeholder="Background image URL"
-          value={layout.backgroundImageUrl}
-          onChange={(event) => onChange({ backgroundImageUrl: event.target.value })}
+        <TrustedThemeImageField
+          label="Background image"
+          url={layout.backgroundImageUrl}
+          disabled={disabled}
+          onSelect={onImageSelect}
+          onClear={() =>
+            onChange({ backgroundImageObjectKey: "", backgroundImageUrl: "" })
+          }
         />
       </div>
       <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-1">
@@ -2820,35 +2904,45 @@ export function ThemeEditorPanel({
     });
   }
 
-  async function uploadHeaderLogo(file: File | null | undefined) {
-    if (!file || !selectedComponentKey) return;
+  async function uploadThemeImage(
+    file: File | null | undefined,
+    label: string,
+    onUploaded: (asset: { objectKey: string; url: string }) => void,
+  ) {
+    if (!file) return;
     if (!file.type.startsWith("image/")) {
-      setMessage("Please upload an image file for the header logo.");
+      setMessage(`Please upload an image file for ${label}.`);
       return;
     }
     if (file.size > 5 * 1024 * 1024) {
-      setMessage("Header logo must be 5 MB or smaller.");
+      setMessage(`${label} must be 5 MB or smaller.`);
       return;
     }
-    setWorking("component-content");
+    setWorking("theme-media");
     try {
-      const formData = new FormData();
-      formData.append("scope", "business-logo");
-      formData.append("file", file);
-      const uploaded = recordFromUnknown(await uploadAdminMedia(formData));
-      const logoUrl = stringFromUnknown(
-        uploaded.transparentUrl ?? uploaded.url ?? uploaded.fileUrl ?? uploaded.publicUrl,
-      ).trim();
-      if (!logoUrl) throw new Error("Upload finished but no logo URL was returned.");
-      updateComponentContentDraft(selectedComponentKey, {
-        logoImageUrl: logoUrl,
-      });
-      setMessage("Header logo uploaded. Click Apply content, then Save page.");
+      const uploaded = recordFromUnknown(await uploadAdminMedia(file));
+      const objectKey = stringFromUnknown(uploaded.objectKey ?? uploaded.key).trim();
+      const url = stringFromUnknown(uploaded.url ?? uploaded.fileUrl).trim();
+      if (!objectKey || !url) {
+        throw new Error("Upload finished without a trusted media key and preview URL.");
+      }
+      onUploaded({ objectKey, url });
+      setMessage(`${label} uploaded. Save the page to apply it.`);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Header logo upload failed.");
+      setMessage(error instanceof Error ? error.message : `${label} upload failed.`);
     } finally {
       setWorking(null);
     }
+  }
+
+  async function uploadHeaderLogo(file: File | null | undefined) {
+    if (!file || !selectedComponentKey) return;
+    await uploadThemeImage(file, "Header logo", ({ objectKey, url }) => {
+      updateComponentContentDraft(selectedComponentKey, {
+        logoImageObjectKey: objectKey,
+        logoImageUrl: url,
+      });
+    });
   }
 
   async function addComponentDataField() {
@@ -2897,9 +2991,7 @@ export function ThemeEditorPanel({
       "text",
     );
     const nextField: ComponentDataField = {
-      key: result.values.key
-        .trim()
-        .replace(/[^a-zA-Z0-9_.-]+/g, "_"),
+      key: normalizeThemeDataFieldKey(result.values.key, type),
       label: result.values.label.trim(),
       type,
       required: result.values.required === "true",
@@ -2933,14 +3025,15 @@ export function ThemeEditorPanel({
       ],
     });
     if (!result.confirmed) return;
+    const type = optionFromUnknown(
+      result.values.type,
+      ["text", "number", "image", "url", "boolean", "json"] as const,
+      existing.type,
+    );
     const nextField: ComponentDataField = {
-      key: result.values.key.trim().replace(/[^a-zA-Z0-9_.-]+/g, "_"),
+      key: normalizeThemeDataFieldKey(result.values.key, type),
       label: result.values.label.trim(),
-      type: optionFromUnknown(
-        result.values.type,
-        ["text", "number", "image", "url", "boolean", "json"] as const,
-        existing.type,
-      ),
+      type,
       required: result.values.required === "true",
       example: result.values.example ?? "",
     };
@@ -2981,8 +3074,7 @@ export function ThemeEditorPanel({
               : field.type === "image"
                 ? ("image" as const)
               : ("text" as const),
-        imageScope: field.key.toLowerCase().includes("vehicle") || field.key.toLowerCase().includes("cab") ? "cab" : "general",
-        storagePrefix: "uploads/",
+        imagePurpose: "platform.site-theme-asset" as const,
       };
     });
   }
@@ -4447,11 +4539,20 @@ export function ThemeEditorPanel({
                   value={pageDesign.textColor}
                   onChange={(textColor) => updatePageDesign({ textColor })}
                 />
-                <Input
-                  placeholder="Page background image URL"
-                  value={pageDesign.backgroundImageUrl}
-                  onChange={(event) =>
-                    updatePageDesign({ backgroundImageUrl: event.target.value })
+                <TrustedThemeImageField
+                  label="Page background image"
+                  url={pageDesign.backgroundImageUrl}
+                  disabled={working === "theme-media"}
+                  onSelect={(file) =>
+                    void uploadThemeImage(file, "Page background", ({ objectKey, url }) =>
+                      updatePageDesign({
+                        backgroundImageObjectKey: objectKey,
+                        backgroundImageUrl: url,
+                      }),
+                    )
+                  }
+                  onClear={() =>
+                    updatePageDesign({ backgroundImageObjectKey: "", backgroundImageUrl: "" })
                   }
                 />
                 <Input
@@ -4653,12 +4754,22 @@ export function ThemeEditorPanel({
                       })
                     }
                   />
-                  <Input
-                    placeholder="Background image URL"
-                    value={selectedSection.layout.backgroundImageUrl}
-                    onChange={(event) =>
+                  <TrustedThemeImageField
+                    label="Section background image"
+                    url={selectedSection.layout.backgroundImageUrl}
+                    disabled={working === "theme-media"}
+                    onSelect={(file) =>
+                      void uploadThemeImage(file, "Section background", ({ objectKey, url }) =>
+                        updateSectionLayout(selectedSection.id, {
+                          backgroundImageObjectKey: objectKey,
+                          backgroundImageUrl: url,
+                        }),
+                      )
+                    }
+                    onClear={() =>
                       updateSectionLayout(selectedSection.id, {
-                        backgroundImageUrl: event.target.value,
+                        backgroundImageObjectKey: "",
+                        backgroundImageUrl: "",
                       })
                     }
                   />
@@ -4768,6 +4879,15 @@ export function ThemeEditorPanel({
                 <LayoutSettingsFields
                   layout={selectedGroup.layout}
                   onChange={(patch) => updateGroupLayout(selectedGroup.id, patch)}
+                  disabled={working === "theme-media"}
+                  onImageSelect={(file) =>
+                    void uploadThemeImage(file, "Group background", ({ objectKey, url }) =>
+                      updateGroupLayout(selectedGroup.id, {
+                        backgroundImageObjectKey: objectKey,
+                        backgroundImageUrl: url,
+                      }),
+                    )
+                  }
                 />
               </SettingsSection>
               <CodeEditorTextarea
@@ -4882,15 +5002,25 @@ export function ThemeEditorPanel({
                         </>
                       ) : null}
                       {!selectedComponentIsFixed ? (
-  	                    <Input
-  	                      placeholder="Image URL"
-  	                      value={selectedComponentContentDraft.imageUrl}
-  	                      onChange={(event) =>
-  	                        updateComponentContentDraft(selectedComponentKey, {
-  	                          imageUrl: event.target.value,
-  	                        })
-  	                      }
-  	                    />
+	                    <TrustedThemeImageField
+	                      label="Component image"
+	                      url={selectedComponentContentDraft.imageUrl}
+	                      disabled={working === "theme-media"}
+	                      onSelect={(file) =>
+	                        void uploadThemeImage(file, "Component image", ({ objectKey, url }) =>
+	                          updateComponentContentDraft(selectedComponentKey, {
+	                            imageObjectKey: objectKey,
+	                            imageUrl: url,
+	                          }),
+	                        )
+	                      }
+	                      onClear={() =>
+	                        updateComponentContentDraft(selectedComponentKey, {
+	                          imageObjectKey: "",
+	                          imageUrl: "",
+	                        })
+	                      }
+	                    />
                       ) : null}
                       {selectedComponentIsHeader ? (
                         <SettingsSection
@@ -4948,15 +5078,6 @@ export function ThemeEditorPanel({
                               }}
                             />
                             <Input
-                              placeholder="Logo image URL"
-                              value={selectedComponentContentDraft.logoImageUrl}
-                              onChange={(event) =>
-                                updateComponentContentDraft(selectedComponentKey, {
-                                  logoImageUrl: event.target.value,
-                                })
-                              }
-                            />
-                            <Input
                               placeholder="Logo text fallback, for example VS"
                               value={selectedComponentContentDraft.logoText}
                               onChange={(event) =>
@@ -4973,6 +5094,7 @@ export function ThemeEditorPanel({
                                   variant="outline"
                                   onClick={() =>
                                     updateComponentContentDraft(selectedComponentKey, {
+                                      logoImageObjectKey: "",
                                       logoImageUrl: "",
                                     })
                                   }
@@ -5683,12 +5805,25 @@ export function ThemeEditorPanel({
                             })
                           }
                         />
-                        <Input
-                          placeholder="Background image URL"
-                          value={selectedComponentContentDraft.componentBackgroundImageUrl}
-                          onChange={(event) =>
+                        <TrustedThemeImageField
+                          label="Component background image"
+                          url={selectedComponentContentDraft.componentBackgroundImageUrl}
+                          disabled={working === "theme-media"}
+                          onSelect={(file) =>
+                            void uploadThemeImage(
+                              file,
+                              "Component background",
+                              ({ objectKey, url }) =>
+                                updateComponentContentDraft(selectedComponentKey, {
+                                  componentBackgroundImageObjectKey: objectKey,
+                                  componentBackgroundImageUrl: url,
+                                }),
+                            )
+                          }
+                          onClear={() =>
                             updateComponentContentDraft(selectedComponentKey, {
-                              componentBackgroundImageUrl: event.target.value,
+                              componentBackgroundImageObjectKey: "",
+                              componentBackgroundImageUrl: "",
                             })
                           }
                         />

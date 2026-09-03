@@ -6,6 +6,8 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
+import { uploadAdminMedia } from '@/lib/trusted-media'
+import type { MediaPurpose } from '@vendero/media'
 
 type ActionVariant = 'default' | 'danger'
 type ImagePickerTab = 'storage' | 'upload'
@@ -18,6 +20,8 @@ type StorageImageFile = {
   sizeBytes?: number
   lastModified?: string | null
   url: string | null
+  visibility?: 'public' | 'private'
+  status?: string
 }
 
 export type ActionModalField = {
@@ -28,7 +32,7 @@ export type ActionModalField = {
   placeholder?: string
   type?: 'text' | 'textarea' | 'checkbox' | 'switch' | 'image'
   required?: boolean
-  imageScope?: string
+  imagePurpose?: MediaPurpose
   storagePrefix?: string
 }
 
@@ -87,13 +91,13 @@ function formatBytes(bytes?: number) {
   return `${(bytes / 1024 ** index).toFixed(index === 0 ? 0 : 1)} ${units[index]}`
 }
 
-async function requestStorageImages(prefix: string) {
+async function requestStorageImages(prefix: string | undefined, purpose: MediaPurpose) {
   const token = getAdminToken()
   const params = new URLSearchParams({
-    prefix,
     limit: '120',
     includeUsage: 'false',
   })
+  if (prefix?.startsWith('v1/')) params.set('prefix', prefix)
   const response = await fetch(`/api/v1/admin/storage?${params.toString()}`, {
     cache: 'no-store',
     headers: {
@@ -106,37 +110,27 @@ async function requestStorageImages(prefix: string) {
   }
   const data = unwrapPayload(payload)
   const files = Array.isArray(data?.files) ? data.files : []
-  return files.filter(isImageFile) as StorageImageFile[]
+  return files.filter(
+    (file: StorageImageFile) =>
+      isImageFile(file) &&
+      file.scope === purpose &&
+      file.visibility === 'public' &&
+      file.status === 'ready'
+  ) as StorageImageFile[]
 }
 
-async function uploadPickerImage(file: File, scope: string) {
+async function uploadPickerImage(file: File, purpose: MediaPurpose) {
   if (!file.type.startsWith('image/')) {
     throw new Error('Please upload an image file.')
   }
   if (file.size > 5 * 1024 * 1024) {
     throw new Error('Image must be 5 MB or smaller.')
   }
-  const token = getAdminToken()
-  const formData = new FormData()
-  formData.append('scope', scope || 'cab')
-  formData.append('file', file)
-  const response = await fetch('/api/v1/admin/media/upload', {
-    method: 'POST',
-    headers: {
-      authorization: token ? `Bearer ${token}` : '',
-    },
-    body: formData,
-  })
-  const payload = await response.json().catch(() => ({}))
-  if (!response.ok) {
-    throw new Error(requestErrorMessage(payload, response.statusText || 'Image upload failed'))
-  }
-  const uploaded = unwrapPayload(payload)
-  const url = uploaded?.url ?? uploaded?.fileUrl ?? uploaded?.publicUrl
-  if (typeof url !== 'string' || !url.trim()) {
+  const asset = await uploadAdminMedia(file, purpose)
+  if (!asset.url) {
     throw new Error('Upload finished but no image URL was returned.')
   }
-  return url.trim()
+  return { objectKey: asset.objectKey, url: asset.url }
 }
 
 export function useActionModal() {
@@ -226,6 +220,7 @@ function ActionModal({
       return acc
     }, {})
   )
+  const [imagePreviews, setImagePreviews] = React.useState<Record<string, string>>({})
   const [validationMessage, setValidationMessage] = React.useState<string | null>(null)
   const [imagePickerField, setImagePickerField] = React.useState<ActionModalField | null>(null)
   const [imagePickerTab, setImagePickerTab] = React.useState<ImagePickerTab>('storage')
@@ -255,7 +250,10 @@ function ActionModal({
     setImagePickerLoading(true)
     setImagePickerMessage(null)
     try {
-      const files = await requestStorageImages(field.storagePrefix ?? 'uploads/')
+      const files = await requestStorageImages(
+        field.storagePrefix,
+        field.imagePurpose ?? 'platform.site-theme-asset'
+      )
       setStorageImages(files)
     } catch (error) {
       setImagePickerMessage(error instanceof Error ? error.message : 'Unable to load storage images.')
@@ -271,9 +269,10 @@ function ActionModal({
     if (tab === 'storage') void loadStorageImages(field)
   }
 
-  function selectImageUrl(url: string) {
+  function selectImage(file: StorageImageFile) {
     if (!imagePickerField) return
-    setValues((current) => ({ ...current, [imagePickerField.name]: url }))
+    setValues((current) => ({ ...current, [imagePickerField.name]: file.key }))
+    setImagePreviews((current) => ({ ...current, [imagePickerField.name]: file.url ?? '' }))
     setImagePickerField(null)
   }
 
@@ -282,8 +281,12 @@ function ActionModal({
     setImageUploading(true)
     setImagePickerMessage(null)
     try {
-      const url = await uploadPickerImage(file, imagePickerField.imageScope ?? 'cab')
-      setValues((current) => ({ ...current, [imagePickerField.name]: url }))
+      const asset = await uploadPickerImage(
+        file,
+        imagePickerField.imagePurpose ?? 'platform.site-theme-asset'
+      )
+      setValues((current) => ({ ...current, [imagePickerField.name]: asset.objectKey }))
+      setImagePreviews((current) => ({ ...current, [imagePickerField.name]: asset.url ?? '' }))
       setImagePickerMessage('Image uploaded and selected.')
       setImagePickerField(null)
     } catch (error) {
@@ -357,24 +360,19 @@ function ActionModal({
                     <div className="grid gap-2">
                       {values[field.name] ? (
                         <div className="flex items-center gap-3 rounded-md border border-border bg-muted/20 p-2">
-                          <img
-                            alt=""
-                            className="h-14 w-16 rounded-md border border-border bg-background object-contain"
-                            src={values[field.name]}
-                          />
+                          {imagePreviews[field.name] ? (
+                            <img
+                              alt=""
+                              className="h-14 w-16 rounded-md border border-border bg-background object-contain"
+                              src={imagePreviews[field.name]}
+                            />
+                          ) : null}
                           <div className="min-w-0">
                             <p className="text-xs font-medium">Selected image</p>
                             <p className="truncate text-xs text-muted-foreground">{values[field.name]}</p>
                           </div>
                         </div>
                       ) : null}
-                      <Input
-                        value={values[field.name] ?? ''}
-                        onChange={(event) =>
-                          setValues((current) => ({ ...current, [field.name]: event.target.value }))
-                        }
-                        placeholder={field.placeholder ?? 'Image URL'}
-                      />
                       <div className="flex flex-wrap gap-2">
                         <Button type="button" size="sm" variant="outline" onClick={() => openImagePicker(field, 'storage')}>
                           Choose image
@@ -387,7 +385,10 @@ function ActionModal({
                             type="button"
                             size="sm"
                             variant="ghost"
-                            onClick={() => setValues((current) => ({ ...current, [field.name]: '' }))}
+                            onClick={() => {
+                              setValues((current) => ({ ...current, [field.name]: '' }))
+                              setImagePreviews((current) => ({ ...current, [field.name]: '' }))
+                            }}
                           >
                             Clear
                           </Button>
@@ -478,7 +479,7 @@ function ActionModal({
                 <div className="space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className="text-sm text-muted-foreground">
-                      Images from {imagePickerField.storagePrefix ?? 'uploads/'}
+                      Ready images uploaded for this theme
                     </p>
                     <Button type="button" size="sm" variant="outline" disabled={imagePickerLoading} onClick={() => void loadStorageImages()}>
                       {imagePickerLoading ? 'Loading...' : 'Refresh'}
@@ -491,7 +492,7 @@ function ActionModal({
                           key={file.key}
                           type="button"
                           className="overflow-hidden rounded-lg border border-border bg-muted/10 text-left transition hover:border-primary"
-                          onClick={() => file.url ? selectImageUrl(file.url) : undefined}
+                          onClick={() => selectImage(file)}
                           disabled={!file.url}
                         >
                           <div className="grid h-32 place-items-center bg-background">
@@ -520,12 +521,12 @@ function ActionModal({
                   <div className="rounded-lg border border-dashed border-border p-5">
                     <p className="font-medium">Upload to R2 storage</p>
                     <p className="mt-1 text-sm text-muted-foreground">
-                      Scope: {imagePickerField.imageScope ?? 'cab'}. After upload, the returned public URL is selected automatically.
+                      The file is validated by the media service and its VenderO object key is selected automatically.
                     </p>
                     <Input
                       className="mt-4"
                       type="file"
-                      accept="image/*"
+                      accept="image/jpeg,image/png,image/webp"
                       disabled={imageUploading}
                       onChange={(event) => {
                         const file = event.target.files?.[0] ?? null

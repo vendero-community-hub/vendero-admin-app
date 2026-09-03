@@ -40,8 +40,8 @@ export const themeDataDefinitions: ThemeDataDefinition[] = [
       { key: "price", label: "Fare text", type: "text", required: false, example: "From Rs. 12/km" },
       { key: "perKmRate", label: "Per-km rate", type: "number", required: false, example: "12" },
       { key: "availabilityStatus", label: "Availability", type: "text", required: false, example: "available" },
-      { key: "imageUrl", label: "Vehicle image", type: "image", required: false, example: "" },
-      { key: "galleryImages", label: "Vehicle gallery", type: "json", required: false, example: "[\"/cab-front.jpg\",\"/cab-interior.jpg\"]" },
+      { key: "imageObjectKey", label: "Vehicle image", type: "image", required: false, example: "" },
+      { key: "galleryImageObjectKeys", label: "Vehicle gallery keys", type: "json", required: false, example: "[]" },
       { key: "included", label: "Included with cab", type: "json", required: false, example: "[\"Driver\",\"Fuel\"]" },
       { key: "excluded", label: "Not included", type: "json", required: false, example: "[\"Tolls\",\"Parking\"]" },
       { key: "detailPath", label: "Cab detail path", type: "url", required: false, example: "/vehicles/sedan-cab" },
@@ -70,7 +70,7 @@ export const themeDataDefinitions: ThemeDataDefinition[] = [
       { key: "distanceKm", label: "Distance in km", type: "number", required: false, example: "110" },
       { key: "durationText", label: "Travel duration", type: "text", required: false, example: "2 hr 15 min" },
       { key: "minRateTotal", label: "Fare text", type: "text", required: false, example: "Rs. 2,499" },
-      { key: "imageUrl", label: "Route image", type: "image", required: false, example: "" },
+      { key: "imageObjectKey", label: "Route image", type: "image", required: false, example: "" },
       { key: "highlights", label: "Route highlights", type: "json", required: false, example: "[\"Doorstep pickup\",\"Verified driver\"]" },
       { key: "itinerary", label: "Suggested itinerary", type: "json", required: false, example: "[{\"title\":\"Pickup\",\"description\":\"Meet your driver\"}]" },
       { key: "included", label: "Included in route fare", type: "json", required: false, example: "[\"Driver\",\"Fuel\"]" },
@@ -99,7 +99,7 @@ export const themeDataDefinitions: ThemeDataDefinition[] = [
       { key: "reviewText", label: "Review text", type: "text", required: true, example: "Clean cab and quick confirmation." },
       { key: "routeTitle", label: "Related route", type: "text", required: false, example: "Ahmedabad to Vadodara" },
       { key: "cabTitle", label: "Related cab", type: "text", required: false, example: "Sedan cab" },
-      { key: "reviewImageUrl", label: "Reviewer image", type: "image", required: false, example: "" },
+      { key: "reviewImageObjectKey", label: "Reviewer image", type: "image", required: false, example: "" },
       { key: "verified", label: "Verified trip", type: "boolean", required: false, example: "true" },
       { key: "createdAt", label: "Date", type: "text", required: false, example: "Jun 2026" },
     ],
@@ -141,7 +141,7 @@ export const themeDataDefinitions: ThemeDataDefinition[] = [
       { key: "description", label: "Description", type: "text", required: false, example: "Pickup and drop support." },
       { key: "serviceType", label: "Service type", type: "text", required: false, example: "airport" },
       { key: "price", label: "Price hint", type: "text", required: false, example: "From Rs. 1,299" },
-      { key: "imageUrl", label: "Service image", type: "image", required: false, example: "" },
+      { key: "imageObjectKey", label: "Service image", type: "image", required: false, example: "" },
       { key: "features", label: "Service features", type: "json", required: false, example: "[\"24x7 pickup\",\"Flight tracking\"]" },
       { key: "included", label: "Included", type: "json", required: false, example: "[\"Driver\",\"Fuel\"]" },
       { key: "excluded", label: "Not included", type: "json", required: false, example: "[\"Parking\"]" },
@@ -268,7 +268,7 @@ export const themeDataDefinitions: ThemeDataDefinition[] = [
     fields: [
       { key: "publicId", label: "Media public ID", type: "text", required: false, example: "gallery_fleet_1" },
       { key: "title", label: "Image title", type: "text", required: true, example: "Clean sedan fleet" },
-      { key: "imageUrl", label: "Image URL", type: "image", required: true, example: "" },
+      { key: "imageObjectKey", label: "Gallery image", type: "image", required: true, example: "" },
       { key: "altText", label: "Accessible alt text", type: "text", required: true, example: "Clean sedan ready for city pickup" },
       { key: "description", label: "Caption", type: "text", required: false, example: "AC cab ready for pickup." },
       { key: "category", label: "Gallery category", type: "text", required: false, example: "fleet" },
@@ -292,8 +292,8 @@ export const themeDataDefinitions: ThemeDataDefinition[] = [
       { key: "legalName", label: "Legal name", type: "text", required: false, example: "Vendero Demo Cabs Private Limited" },
       { key: "category", label: "Category", type: "text", required: false, example: "Taxi Service" },
       { key: "description", label: "Description", type: "text", required: false, example: "Reliable local and outstation taxi service." },
-      { key: "logoUrl", label: "Business logo", type: "image", required: false, example: "" },
-      { key: "coverImageUrl", label: "Cover image", type: "image", required: false, example: "" },
+      { key: "logoObjectKey", label: "Business logo", type: "image", required: false, example: "" },
+      { key: "coverImageObjectKey", label: "Cover image", type: "image", required: false, example: "" },
       { key: "address", label: "Street address", type: "text", required: false, example: "Alkapuri, Vadodara" },
       { key: "city", label: "City", type: "text", required: false, example: "Vadodara" },
       { key: "state", label: "State", type: "text", required: false, example: "Gujarat" },
@@ -332,6 +332,13 @@ export function normalizeThemeDataKey(value: unknown) {
   return alias?.key ?? raw;
 }
 
+export function normalizeThemeDataFieldKey(value: unknown, type: ThemeDataFieldType) {
+  const key = String(value ?? "").trim().replace(/[^a-zA-Z0-9_.-]+/g, "_");
+  if (type !== "image" || /ObjectKey$/i.test(key)) return key;
+  const base = key.replace(/Urls?$/i, "").replace(/Images?$/i, "Image");
+  return `${base || "image"}ObjectKey`;
+}
+
 export function themeDataDefinitionForKey(value: unknown) {
   const key = normalizeThemeDataKey(value);
   return themeDataDefinitions.find((definition) => definition.key === key) ?? null;
@@ -344,7 +351,7 @@ export function defaultDataFieldsForThemeDataset(value: unknown): ThemeDataField
     : [
         { key: "title", label: "Title", type: "text", required: true, example: "Card title" },
         { key: "description", label: "Description", type: "text", required: false, example: "Short description" },
-        { key: "imageUrl", label: "Image URL", type: "image", required: false, example: "" },
+        { key: "imageObjectKey", label: "Image", type: "image", required: false, example: "" },
       ];
 }
 

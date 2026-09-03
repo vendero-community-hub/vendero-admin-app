@@ -21,6 +21,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { uploadAdminMedia } from "@/lib/trusted-media";
 
 type VendorSummary = {
   id: number;
@@ -148,6 +149,7 @@ type PremiumPreviewVendor = {
   publicId: string | null;
   displayName: string | null;
   businessName: string | null;
+  avatarObjectKey: string | null;
   avatarUrl: string | null;
   phone: string | null;
   status: string | null;
@@ -425,9 +427,10 @@ export function TripOperationsPanel({
     displayName: "",
     businessName: "",
     phone: "",
-    avatarUrl: "",
     priority: "0",
   });
+  const [previewVendorAvatarFile, setPreviewVendorAvatarFile] =
+    useState<File | null>(null);
   const [selectedPreviewPlaces, setSelectedPreviewPlaces] = useState<{
     pickup: PreviewPlace | null;
     drop: PreviewPlace | null;
@@ -606,8 +609,13 @@ export function TripOperationsPanel({
   async function createPreviewVendor() {
     setSavingPreviewVendor(true);
     setError(null);
+    let uploadedAssetId: string | null = null;
 
     try {
+      const avatarAsset = previewVendorAvatarFile
+        ? await uploadAdminMedia(previewVendorAvatarFile, "admin.image-library")
+        : null;
+      uploadedAssetId = avatarAsset?.id ?? null;
       const payload = await requestJson(
         "/api/v1/admin/trips/premium-preview-vendors",
         {
@@ -616,7 +624,7 @@ export function TripOperationsPanel({
             displayName: previewVendorForm.displayName.trim(),
             businessName: previewVendorForm.businessName.trim(),
             phone: previewVendorForm.phone.trim() || undefined,
-            avatarUrl: previewVendorForm.avatarUrl.trim() || undefined,
+            avatarObjectKey: avatarAsset?.objectKey,
             priority: Number(previewVendorForm.priority),
             isVerified: true,
           }),
@@ -635,10 +643,16 @@ export function TripOperationsPanel({
         displayName: "",
         businessName: "",
         phone: "",
-        avatarUrl: "",
         priority: "0",
       });
+      setPreviewVendorAvatarFile(null);
     } catch (requestError) {
+      if (uploadedAssetId) {
+        await requestJson(
+          `/api/v1/admin/media/assets/${encodeURIComponent(uploadedAssetId)}`,
+          { method: "DELETE" },
+        ).catch(() => null);
+      }
       setError(
         requestError instanceof Error
           ? requestError.message
@@ -1039,16 +1053,16 @@ export function TripOperationsPanel({
                     }
                     placeholder="Phone optional"
                   />
-                  <Input
-                    value={previewVendorForm.avatarUrl}
-                    onChange={(event) =>
-                      setPreviewVendorForm((current) => ({
-                        ...current,
-                        avatarUrl: event.target.value,
-                      }))
-                    }
-                    placeholder="Avatar URL optional"
-                  />
+                  <label className="grid gap-1 text-xs font-medium text-muted-foreground">
+                    <span>Avatar image (optional)</span>
+                    <Input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      onChange={(event) =>
+                        setPreviewVendorAvatarFile(event.target.files?.[0] ?? null)
+                      }
+                    />
+                  </label>
                 </div>
                 <div className="mt-3 flex flex-col gap-3 sm:flex-row">
                   <Input

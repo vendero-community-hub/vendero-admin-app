@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { useActionModal } from '@/components/ui/action-modal'
+import { uploadAdminMedia } from '@/lib/trusted-media'
 
 type BadgeTone = 'default' | 'secondary' | 'outline' | 'success' | 'warning' | 'danger'
 type FeatureStatus = 'available' | 'coming_soon'
@@ -26,7 +27,9 @@ type FeatureStats = {
 
 type FeatureMetadata = {
   tagline?: string | null
+  imageObjectKeys?: string[]
   imageUrls?: string[]
+  videoObjectKey?: string | null
   videoUrl?: string | null
   youtubeUrl?: string | null
   [key: string]: unknown
@@ -102,8 +105,10 @@ type FeatureForm = {
   allowWaitlist: boolean
   allowEarlyAccess: boolean
   detailTagline: string
-  imageUrls: string
-  videoUrl: string
+  imageObjectKeys: string[]
+  imagePreviewUrls: string[]
+  videoObjectKey: string
+  videoPreviewUrl: string
   youtubeUrl: string
 }
 
@@ -117,8 +122,10 @@ const emptyFeatureForm: FeatureForm = {
   allowWaitlist: true,
   allowEarlyAccess: true,
   detailTagline: '',
-  imageUrls: '',
-  videoUrl: '',
+  imageObjectKeys: [],
+  imagePreviewUrls: [],
+  videoObjectKey: '',
+  videoPreviewUrl: '',
   youtubeUrl: '',
 }
 
@@ -180,20 +187,16 @@ function textFromMetadata(value: unknown) {
   return typeof value === 'string' ? value.trim() : ''
 }
 
-function parseUrlLines(value: string) {
-  return value
-    .split(/\n|,/)
-    .map((item) => item.trim())
-    .filter(Boolean)
-}
-
 function normalizeMediaList(value: unknown) {
   if (Array.isArray(value)) {
     return value.map((item) => textFromMetadata(item)).filter(Boolean)
   }
 
   if (typeof value === 'string') {
-    return parseUrlLines(value)
+    return value
+      .split(/\n|,/)
+      .map((item) => item.trim())
+      .filter(Boolean)
   }
 
   return []
@@ -204,10 +207,20 @@ function getFeatureMedia(feature: Pick<FeatureCard, 'metadata'> | null | undefin
 
   return {
     tagline: textFromMetadata(metadata.tagline ?? metadata.detailTagline ?? metadata.subtitle),
+    imageObjectKeys: normalizeMediaList(metadata.imageObjectKeys),
     imageUrls: normalizeMediaList(metadata.imageUrls ?? metadata.images ?? metadata.imageUrl),
+    videoObjectKey: textFromMetadata(metadata.videoObjectKey),
     videoUrl: textFromMetadata(metadata.videoUrl ?? metadata.video_url ?? metadata.demoVideoUrl),
     youtubeUrl: textFromMetadata(metadata.youtubeUrl ?? metadata.youtube_url ?? metadata.youtubeVideoUrl),
   }
+}
+
+function metadataForWrite(value: FeatureMetadata | null | undefined) {
+  const metadata = { ...(value ?? {}) }
+  for (const field of ['imageUrl', 'imageUrls', 'images', 'videoUrl', 'video_url', 'demoVideoUrl']) {
+    delete metadata[field]
+  }
+  return metadata
 }
 
 function fallbackData(): NonNullable<FeatureControlData> {
@@ -240,8 +253,10 @@ function formFromFeature(feature: FeatureCard): FeatureForm {
     allowWaitlist: feature.allowWaitlist,
     allowEarlyAccess: feature.allowEarlyAccess,
     detailTagline: media.tagline,
-    imageUrls: media.imageUrls.join('\n'),
-    videoUrl: media.videoUrl,
+    imageObjectKeys: media.imageObjectKeys,
+    imagePreviewUrls: media.imageUrls,
+    videoObjectKey: media.videoObjectKey,
+    videoPreviewUrl: media.videoUrl,
     youtubeUrl: media.youtubeUrl,
   }
 }
@@ -264,16 +279,68 @@ export function FeatureControlPanel({ initialData }: { initialData: FeatureContr
     setData(nextData)
   }
 
+  async function uploadFeatureImages(files: FileList | null) {
+    if (!files?.length) return
+    const remaining = Math.max(0, 10 - featureForm.imageObjectKeys.length)
+    const selected = Array.from(files).slice(0, remaining)
+    if (!selected.length) {
+      setMessage('A feature card can use at most ten images.')
+      return
+    }
+    setWorking('feature-images')
+    setMessage('')
+    try {
+      const uploaded: Awaited<ReturnType<typeof uploadAdminMedia>>[] = []
+      for (const file of selected) {
+        uploaded.push(await uploadAdminMedia(file, 'platform.feature-card-image'))
+      }
+      setFeatureForm((current) => ({
+        ...current,
+        imageObjectKeys: [...current.imageObjectKeys, ...uploaded.map((asset) => asset.objectKey)],
+        imagePreviewUrls: [
+          ...current.imagePreviewUrls,
+          ...uploaded.map((asset) => asset.url ?? ''),
+        ],
+      }))
+      setMessage(`${uploaded.length} feature image${uploaded.length === 1 ? '' : 's'} uploaded.`)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Unable to upload feature images')
+    } finally {
+      setWorking(null)
+    }
+  }
+
+  async function uploadFeatureVideo(file: File | null) {
+    if (!file) return
+    setWorking('feature-video')
+    setMessage('')
+    try {
+      const asset = await uploadAdminMedia(file, 'platform.feature-card-video')
+      setFeatureForm((current) => ({
+        ...current,
+        videoObjectKey: asset.objectKey,
+        videoPreviewUrl: asset.url ?? '',
+      }))
+      setMessage('Feature video uploaded.')
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Unable to upload feature video')
+    } finally {
+      setWorking(null)
+    }
+  }
+
   async function submitFeature() {
     setWorking('feature')
     setMessage('')
     try {
       const body = {
         metadata: {
-          ...(featureForm.id ? data.features.find((feature) => feature.id === featureForm.id)?.metadata ?? {} : {}),
+          ...metadataForWrite(
+            featureForm.id ? data.features.find((feature) => feature.id === featureForm.id)?.metadata : null
+          ),
           tagline: featureForm.detailTagline.trim() || null,
-          imageUrls: parseUrlLines(featureForm.imageUrls),
-          videoUrl: featureForm.videoUrl.trim() || null,
+          imageObjectKeys: featureForm.imageObjectKeys,
+          videoObjectKey: featureForm.videoObjectKey || null,
           youtubeUrl: featureForm.youtubeUrl.trim() || null,
         },
         title: featureForm.title.trim(),
@@ -389,22 +456,115 @@ export function FeatureControlPanel({ initialData }: { initialData: FeatureContr
               onChange={(event) => setFeatureForm((current) => ({ ...current, detailTagline: event.target.value }))}
               placeholder="Detail tagline for Know more sheet"
             />
-            <textarea
-              value={featureForm.imageUrls}
-              onChange={(event) => setFeatureForm((current) => ({ ...current, imageUrls: event.target.value }))}
-              placeholder="Image URLs, one per line"
-              className="min-h-24 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-            />
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Input
-                value={featureForm.videoUrl}
-                onChange={(event) => setFeatureForm((current) => ({ ...current, videoUrl: event.target.value }))}
-                placeholder="Video URL"
-              />
+            <div className="space-y-2 rounded-md border border-input p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-sm font-medium">Feature images</p>
+                  <p className="text-xs text-muted-foreground">JPG, PNG, or WebP; up to 5 MB each.</p>
+                </div>
+                <label className="cursor-pointer rounded-md border border-input bg-background px-3 py-2 text-sm font-medium">
+                  {working === 'feature-images' ? 'Uploading...' : 'Choose images'}
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    multiple
+                    className="sr-only"
+                    disabled={Boolean(working)}
+                    onChange={(event) => {
+                      void uploadFeatureImages(event.currentTarget.files)
+                      event.currentTarget.value = ''
+                    }}
+                  />
+                </label>
+              </div>
+              {featureForm.imageObjectKeys.length ? (
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  {featureForm.imageObjectKeys.map((objectKey, index) => (
+                    <div key={objectKey} className="flex items-center gap-2 rounded-md border border-border p-2">
+                      {featureForm.imagePreviewUrls[index] ? (
+                        <img
+                          src={featureForm.imagePreviewUrls[index]}
+                          alt="Feature preview"
+                          className="h-12 w-16 rounded object-cover"
+                        />
+                      ) : (
+                        <ImageIcon className="h-8 w-8 text-muted-foreground" />
+                      )}
+                      <span className="min-w-0 flex-1 truncate text-xs" title={objectKey}>
+                        Image {index + 1}
+                      </span>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        aria-label={`Remove image ${index + 1}`}
+                        onClick={() =>
+                          setFeatureForm((current) => ({
+                            ...current,
+                            imageObjectKeys: current.imageObjectKeys.filter((_, itemIndex) => itemIndex !== index),
+                            imagePreviewUrls: current.imagePreviewUrls.filter((_, itemIndex) => itemIndex !== index),
+                          }))
+                        }
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+            <div className="space-y-2 rounded-md border border-input p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-sm font-medium">Feature video</p>
+                  <p className="text-xs text-muted-foreground">MP4 or MOV; up to 5 MB.</p>
+                </div>
+                <label className="cursor-pointer rounded-md border border-input bg-background px-3 py-2 text-sm font-medium">
+                  {working === 'feature-video' ? 'Uploading...' : 'Choose video'}
+                  <input
+                    type="file"
+                    accept="video/mp4,video/quicktime"
+                    className="sr-only"
+                    disabled={Boolean(working)}
+                    onChange={(event) => {
+                      void uploadFeatureVideo(event.currentTarget.files?.[0] ?? null)
+                      event.currentTarget.value = ''
+                    }}
+                  />
+                </label>
+              </div>
+              {featureForm.videoObjectKey ? (
+                <div className="flex items-center gap-2 rounded-md border border-border p-2">
+                  {featureForm.videoPreviewUrl ? (
+                    <video className="h-16 w-24 rounded object-cover" src={featureForm.videoPreviewUrl} controls />
+                  ) : (
+                    <PlayCircle className="h-8 w-8 text-muted-foreground" />
+                  )}
+                  <span className="min-w-0 flex-1 truncate text-xs" title={featureForm.videoObjectKey}>
+                    Uploaded feature video
+                  </span>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      setFeatureForm((current) => ({
+                        ...current,
+                        videoObjectKey: '',
+                        videoPreviewUrl: '',
+                      }))
+                    }
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              ) : null}
+            </div>
+            <div className="grid gap-3">
               <Input
                 value={featureForm.youtubeUrl}
                 onChange={(event) => setFeatureForm((current) => ({ ...current, youtubeUrl: event.target.value }))}
-                placeholder="YouTube video URL"
+                placeholder="Optional YouTube HTTPS URL"
               />
             </div>
             <div className="grid gap-3 sm:grid-cols-3">
@@ -457,7 +617,7 @@ export function FeatureControlPanel({ initialData }: { initialData: FeatureContr
             <div className="flex flex-wrap gap-2">
               <Button
                 onClick={submitFeature}
-                disabled={working === 'feature' || !featureForm.title.trim() || !featureForm.body.trim()}
+                disabled={Boolean(working) || !featureForm.title.trim() || !featureForm.body.trim()}
               >
                 {working === 'feature' ? 'Saving...' : featureForm.id ? 'Save feature' : 'Create feature'}
               </Button>

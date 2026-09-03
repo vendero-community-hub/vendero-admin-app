@@ -6,9 +6,11 @@ import {
   Circle,
   FileText,
   Loader2,
+  Paperclip,
   RefreshCw,
   Send,
   UserRoundCog,
+  X,
 } from 'lucide-react'
 import { APP_ENV, socketIoEndpoint } from '@/lib/environment'
 import { cn } from '@/lib/utils'
@@ -16,6 +18,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { uploadAdminMedia } from '@/lib/trusted-media'
 
 type TicketStatus = 'open' | 'pending_support' | 'pending_user' | 'resolved' | 'closed'
 type TicketPriority = 'normal' | 'high' | 'urgent'
@@ -75,6 +78,12 @@ type SupportMessageRecord = {
   requesterReadAt: string | null
   createdAt: string | null
   updatedAt: string | null
+}
+
+type PendingAttachment = {
+  objectKey: string
+  type: 'image' | 'document'
+  name: string
 }
 
 type SupportPanelProps = {
@@ -167,6 +176,8 @@ export function SupportPanel({ initialThreads, staff }: SupportPanelProps) {
   const [messages, setMessages] = useState<SupportMessageRecord[]>([])
   const [query, setQuery] = useState('')
   const [body, setBody] = useState('')
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([])
+  const [uploadingAttachments, setUploadingAttachments] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [loadingMessages, setLoadingMessages] = useState(false)
   const [sending, setSending] = useState(false)
@@ -421,7 +432,7 @@ export function SupportPanel({ initialThreads, staff }: SupportPanelProps) {
       {
         threadId: selectedThreadId,
         body: trimmed,
-        attachments: [],
+        attachments,
       },
       (response: any) => {
         setSending(false)
@@ -430,8 +441,37 @@ export function SupportPanel({ initialThreads, staff }: SupportPanelProps) {
           return
         }
         setBody('')
+        setAttachments([])
       }
     )
+  }
+
+  async function uploadAttachments(files: FileList | null) {
+    if (!files?.length || uploadingAttachments || attachments.length >= 5) return
+    setUploadingAttachments(true)
+    setError(null)
+    try {
+      const selected = Array.from(files).slice(0, 5 - attachments.length)
+      const uploaded: PendingAttachment[] = []
+      for (const file of selected) {
+        const isImage = file.type.startsWith('image/')
+        const asset = await uploadAdminMedia(
+          file,
+          isImage ? 'platform.support-image' : 'platform.support-document'
+        )
+        if (!asset.objectKey) throw new Error('Trusted media key missing after upload')
+        uploaded.push({
+          objectKey: asset.objectKey,
+          type: isImage ? 'image' : 'document',
+          name: file.name,
+        })
+      }
+      setAttachments((current) => [...current, ...uploaded].slice(0, 5))
+    } catch (uploadError) {
+      setError(uploadError instanceof Error ? uploadError.message : 'Attachment upload failed')
+    } finally {
+      setUploadingAttachments(false)
+    }
   }
 
   async function saveTicketSettings() {
@@ -655,9 +695,22 @@ export function SupportPanel({ initialThreads, staff }: SupportPanelProps) {
                             <p className="whitespace-pre-wrap leading-6">{message.body}</p>
                             {message.attachments?.length ? (
                               <div className="mt-2 space-y-1 border-t border-current/20 pt-2 text-xs">
-                                {message.attachments.map((attachment, index) => (
-                                  <p key={`${message.id}-${index}`}>{attachmentLabel(attachment)}</p>
-                                ))}
+                                {message.attachments.map((attachment, index) => {
+                                  const url = typeof attachment.url === 'string' ? attachment.url : null
+                                  return url ? (
+                                    <a
+                                      className="block font-semibold underline underline-offset-2"
+                                      href={url}
+                                      key={`${message.id}-${index}`}
+                                      rel="noreferrer"
+                                      target="_blank"
+                                    >
+                                      {attachmentLabel(attachment)}
+                                    </a>
+                                  ) : (
+                                    <p key={`${message.id}-${index}`}>{attachmentLabel(attachment)}</p>
+                                  )
+                                })}
                               </div>
                             ) : null}
                             <div
@@ -694,24 +747,65 @@ export function SupportPanel({ initialThreads, staff }: SupportPanelProps) {
                   <div className="border-t border-border/70 px-4 py-2 text-sm text-rose-300">{error}</div>
                 ) : null}
 
-                <div className="flex items-end gap-2 border-t border-border/70 p-4">
-                  <textarea
-                    value={body}
-                    onChange={(event) => {
-                      setBody(event.target.value)
-                      socket?.emit(
-                        'support:typing',
-                        { threadId: selectedThreadId, isTyping: event.target.value.length > 0 },
-                        () => {}
-                      )
-                    }}
-                    placeholder="Reply to vendor"
-                    className="min-h-[46px] flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
-                  />
-                  <Button disabled={!body.trim() || sending} onClick={sendMessage}>
-                    {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                    Send
-                  </Button>
+                <div className="border-t border-border/70 p-4">
+                  {attachments.length ? (
+                    <div className="mb-3 flex flex-wrap gap-2">
+                      {attachments.map((attachment, index) => (
+                        <div
+                          className="flex max-w-full items-center gap-2 rounded-md border border-border/70 bg-background/40 px-2 py-1 text-xs"
+                          key={attachment.objectKey}
+                        >
+                          <Paperclip className="h-3.5 w-3.5 text-primary" />
+                          <span className="max-w-56 truncate">{attachment.name}</span>
+                          <button
+                            aria-label={`Remove ${attachment.name}`}
+                            onClick={() => setAttachments((current) => current.filter((_, itemIndex) => itemIndex !== index))}
+                            type="button"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                  <div className="flex items-end gap-2">
+                    <label
+                      className={cn(
+                        'inline-flex h-10 w-10 cursor-pointer items-center justify-center rounded-md border border-input bg-background',
+                        (uploadingAttachments || attachments.length >= 5) && 'cursor-not-allowed opacity-50'
+                      )}
+                    >
+                      {uploadingAttachments ? <Loader2 className="h-4 w-4 animate-spin" /> : <Paperclip className="h-4 w-4" />}
+                      <input
+                        accept="image/jpeg,image/png,image/webp,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.md"
+                        className="hidden"
+                        disabled={uploadingAttachments || attachments.length >= 5}
+                        multiple
+                        onChange={(event) => {
+                          void uploadAttachments(event.target.files)
+                          event.target.value = ''
+                        }}
+                        type="file"
+                      />
+                    </label>
+                    <textarea
+                      value={body}
+                      onChange={(event) => {
+                        setBody(event.target.value)
+                        socket?.emit(
+                          'support:typing',
+                          { threadId: selectedThreadId, isTyping: event.target.value.length > 0 },
+                          () => {}
+                        )
+                      }}
+                      placeholder="Reply to vendor"
+                      className="min-h-[46px] flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+                    />
+                    <Button disabled={!body.trim() || sending || uploadingAttachments} onClick={sendMessage}>
+                      {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                      Send
+                    </Button>
+                  </div>
                 </div>
               </div>
 

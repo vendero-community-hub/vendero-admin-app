@@ -12,6 +12,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { uploadAdminMedia } from "@/lib/trusted-media";
 import { SiteComponentPreview } from "./site-component-preview";
 import {
   formatLabel,
@@ -28,6 +29,7 @@ type ComponentEditorForm = {
   title: string;
   subtitle: string;
   actionLabel: string;
+  imageObjectKey: string;
   imageUrl: string;
   figmaFileKey: string;
   figmaNodeId: string;
@@ -179,6 +181,7 @@ function formFromComponent(
       props.actionLabel,
       textFrom(props.buttonLabel, "Book now"),
     ),
+    imageObjectKey: textFrom(props.imageObjectKey, textFrom(props.bannerImageObjectKey)),
     imageUrl: textFrom(props.imageUrl, textFrom(props.bannerImageUrl)),
     figmaFileKey: component?.figmaFileKey ?? "",
     figmaNodeId: component?.figmaNodeId ?? "",
@@ -190,7 +193,7 @@ function formFromComponent(
     sortOrder: String(component?.sortOrder ?? 0),
     schemaFields:
       schemaFieldsTextFrom(settingsSchema) ||
-      "title:text:required\nsubtitle:text:optional\nimageUrl:image:optional",
+      "title:text:required\nsubtitle:text:optional\nimageObjectKey:image:optional",
     prebuiltVariable: textFrom(metadata.prebuiltVariable, "data.title"),
     datasetKey: textFrom(datasetBinding.datasetKey, "manual"),
     datasetFieldMapping: jsonText(datasetBinding.fieldMapping ?? {}),
@@ -231,6 +234,7 @@ function previewComponentFromForm(
       title: form.title || form.name,
       subtitle: form.subtitle,
       actionLabel: form.actionLabel,
+      imageObjectKey: form.imageObjectKey,
       imageUrl: form.imageUrl,
     },
     assetSchema: existing?.assetSchema ?? {},
@@ -284,10 +288,10 @@ function buildPayload(form: ComponentEditorForm) {
       title: form.title.trim() || form.name.trim(),
       subtitle: form.subtitle.trim(),
       actionLabel: form.actionLabel.trim(),
-      imageUrl: form.imageUrl.trim(),
+      imageObjectKey: form.imageObjectKey.trim() || null,
     },
     assetSchema: {
-      imageUrl: { type: "image", label: "Section image" },
+      imageObjectKey: { type: "image", label: "Section image" },
       ...Object.fromEntries(
         schemaFields
           .filter((field) => field.dataType === "image")
@@ -367,6 +371,25 @@ export function ComponentEditorPanel({
     value: ComponentEditorForm[K],
   ) {
     setForm((current) => ({ ...current, [key]: value }));
+  }
+
+  async function uploadComponentImage(file: File | null) {
+    if (!file) return;
+    setWorking(true);
+    setMessage("Uploading component image…");
+    try {
+      const asset = await uploadAdminMedia(file, "platform.site-theme-asset");
+      setForm((current) => ({
+        ...current,
+        imageObjectKey: asset.objectKey,
+        imageUrl: asset.url ?? "",
+      }));
+      setMessage("Component image uploaded. Save the component to apply it.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to upload component image");
+    } finally {
+      setWorking(false);
+    }
   }
 
   async function saveComponent() {
@@ -487,11 +510,18 @@ export function ComponentEditorPanel({
                   setField("actionLabel", event.target.value)
                 }
               />
-              <Input
-                placeholder="Image URL"
-                value={form.imageUrl}
-                onChange={(event) => setField("imageUrl", event.target.value)}
-              />
+              <label className="grid gap-1 text-xs font-medium text-muted-foreground">
+                <span>Component image</span>
+                <Input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  disabled={working}
+                  onChange={(event) => {
+                    void uploadComponentImage(event.target.files?.[0] ?? null);
+                    event.target.value = "";
+                  }}
+                />
+              </label>
               <Input
                 placeholder="Figma file key"
                 value={form.figmaFileKey}

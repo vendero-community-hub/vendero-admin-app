@@ -15,6 +15,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { uploadAdminMedia } from '@/lib/trusted-media'
 
 type ServiceCategory = 'digital_service' | 'ads_account' | 'website_development' | 'social_media'
 type ServiceStatus = 'draft' | 'live' | 'hidden'
@@ -39,12 +40,14 @@ export type StoreService = {
   shortDescription: string | null
   description: string | null
   imageUrl: string | null
+  imageObjectKey: string | null
   startingPrice: number
   currency: string
   includedItems: string[]
   excludedItems: string[]
   previewUrl: string | null
   detailPdfUrl: string | null
+  detailPdfObjectKey: string | null
   flowSteps: string[]
   status: ServiceStatus
   isActive: boolean
@@ -68,6 +71,7 @@ export type StoreRequest = {
   paymentStatus: PaymentStatus
   paymentReference: string | null
   receiptUrl: string | null
+  receiptObjectKey: string | null
   requiredItems: string[]
   finalResources: Array<{ title: string; url?: string; note?: string | null }>
   adminNotes: string | null
@@ -93,11 +97,13 @@ type ServiceForm = {
   shortDescription: string
   description: string
   imageUrl: string
+  imageObjectKey: string | null
   startingPrice: string
   includedItems: string
   excludedItems: string
   previewUrl: string
   detailPdfUrl: string
+  detailPdfObjectKey: string | null
   flowSteps: string
   status: ServiceStatus
   isActive: boolean
@@ -109,6 +115,7 @@ type RequestDraft = {
   finalAmount: string
   paymentStatus: PaymentStatus
   receiptUrl: string
+  receiptObjectKey: string | null
   requiredItems: string
   finalResources: string
   adminNotes: string
@@ -121,11 +128,13 @@ const emptyServiceForm: ServiceForm = {
   shortDescription: '',
   description: '',
   imageUrl: '',
+  imageObjectKey: null,
   startingPrice: '0',
   includedItems: '',
   excludedItems: '',
   previewUrl: '',
   detailPdfUrl: '',
+  detailPdfObjectKey: null,
   flowSteps: '',
   status: 'draft',
   isActive: true,
@@ -219,11 +228,13 @@ function formFromService(service: StoreService): ServiceForm {
     shortDescription: service.shortDescription ?? '',
     description: service.description ?? '',
     imageUrl: service.imageUrl ?? '',
+    imageObjectKey: service.imageObjectKey ?? null,
     startingPrice: String(service.startingPrice ?? 0),
     includedItems: listText(service.includedItems ?? []),
     excludedItems: listText(service.excludedItems ?? []),
     previewUrl: service.previewUrl ?? '',
     detailPdfUrl: service.detailPdfUrl ?? '',
+    detailPdfObjectKey: service.detailPdfObjectKey ?? null,
     flowSteps: listText(service.flowSteps ?? []),
     status: service.status,
     isActive: service.isActive,
@@ -237,6 +248,7 @@ function draftFromRequest(request: StoreRequest): RequestDraft {
     finalAmount: request.finalAmount === null ? '' : String(request.finalAmount),
     paymentStatus: request.paymentStatus,
     receiptUrl: request.receiptUrl ?? '',
+    receiptObjectKey: request.receiptObjectKey ?? null,
     requiredItems: listText(request.requiredItems ?? []),
     finalResources: resourcesText(request.finalResources ?? []),
     adminNotes: request.adminNotes ?? '',
@@ -273,6 +285,60 @@ export function StoreServicesPanel({ initialData }: { initialData: StoreServices
     setData(nextData)
   }
 
+  async function uploadServiceAsset(file: File, kind: 'image' | 'document') {
+    const action = kind === 'image' ? 'service-image' : 'service-document'
+    setWorking(action)
+    setMessage('')
+    try {
+      const asset = await uploadAdminMedia(
+        file,
+        kind === 'image' ? 'platform.store-service-image' : 'platform.store-service-document'
+      )
+      setServiceForm((current) =>
+        kind === 'image'
+          ? { ...current, imageObjectKey: asset.objectKey, imageUrl: asset.url ?? '' }
+          : {
+              ...current,
+              detailPdfObjectKey: asset.objectKey,
+              detailPdfUrl: asset.url ?? '',
+            }
+      )
+      setMessage(kind === 'image' ? 'Service image is ready.' : 'Service document is ready.')
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Unable to upload the file')
+    } finally {
+      setWorking(null)
+    }
+  }
+
+  async function uploadRequestReceipt(request: StoreRequest, file: File) {
+    const action = `receipt-${request.id}`
+    setWorking(action)
+    setMessage('')
+    try {
+      const asset = await uploadAdminMedia(
+        file,
+        file.type.startsWith('image/')
+          ? 'platform.store-request-receipt-image'
+          : 'platform.store-request-receipt'
+      )
+      const draft = requestDrafts[request.id] ?? draftFromRequest(request)
+      setRequestDrafts((current) => ({
+        ...current,
+        [request.id]: {
+          ...draft,
+          receiptObjectKey: asset.objectKey,
+          receiptUrl: asset.url ?? '',
+        },
+      }))
+      setMessage('Receipt is securely uploaded and ready to save.')
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Unable to upload the receipt')
+    } finally {
+      setWorking(null)
+    }
+  }
+
   async function submitService() {
     setWorking('service')
     setMessage('')
@@ -282,12 +348,12 @@ export function StoreServicesPanel({ initialData }: { initialData: StoreServices
         category: serviceForm.category,
         shortDescription: serviceForm.shortDescription.trim() || null,
         description: serviceForm.description.trim() || null,
-        imageUrl: serviceForm.imageUrl.trim() || null,
+        imageObjectKey: serviceForm.imageObjectKey,
         startingPrice: Number(serviceForm.startingPrice || 0),
         includedItems: parseList(serviceForm.includedItems),
         excludedItems: parseList(serviceForm.excludedItems),
         previewUrl: serviceForm.previewUrl.trim() || null,
-        detailPdfUrl: serviceForm.detailPdfUrl.trim() || null,
+        detailPdfObjectKey: serviceForm.detailPdfObjectKey,
         flowSteps: parseList(serviceForm.flowSteps),
         status: serviceForm.status,
         isActive: serviceForm.isActive,
@@ -322,7 +388,7 @@ export function StoreServicesPanel({ initialData }: { initialData: StoreServices
           status: draft.status,
           finalAmount: draft.finalAmount ? Number(draft.finalAmount) : null,
           paymentStatus: draft.paymentStatus,
-          receiptUrl: draft.receiptUrl.trim() || null,
+          receiptObjectKey: draft.receiptObjectKey,
           requiredItems: parseList(draft.requiredItems),
           finalResources: parseResources(draft.finalResources),
           adminNotes: draft.adminNotes.trim() || null,
@@ -364,10 +430,41 @@ export function StoreServicesPanel({ initialData }: { initialData: StoreServices
           </div>
           <Input placeholder="Short description" value={serviceForm.shortDescription} onChange={(event) => setServiceForm({ ...serviceForm, shortDescription: event.target.value })} />
           <textarea className="min-h-24 w-full rounded-md border border-border bg-background px-3 py-2 text-sm" placeholder="Full description" value={serviceForm.description} onChange={(event) => setServiceForm({ ...serviceForm, description: event.target.value })} />
-          <Input placeholder="Image URL" value={serviceForm.imageUrl} onChange={(event) => setServiceForm({ ...serviceForm, imageUrl: event.target.value })} />
+          <div className="grid gap-3 md:grid-cols-2">
+            <label className="grid gap-2 rounded-md border border-border p-3 text-sm">
+              <span>Service image</span>
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                disabled={Boolean(working)}
+                onChange={(event) => {
+                  const file = event.target.files?.[0]
+                  event.target.value = ''
+                  if (file) void uploadServiceAsset(file, 'image')
+                }}
+              />
+              {serviceForm.imageObjectKey ? <span className="text-xs text-muted-foreground">Secure image selected</span> : null}
+            </label>
+            <label className="grid gap-2 rounded-md border border-border p-3 text-sm">
+              <span>Detail document</span>
+              <input
+                type="file"
+                accept="application/pdf,.doc,.docx,.txt,.md"
+                disabled={Boolean(working)}
+                onChange={(event) => {
+                  const file = event.target.files?.[0]
+                  event.target.value = ''
+                  if (file) void uploadServiceAsset(file, 'document')
+                }}
+              />
+              {serviceForm.detailPdfObjectKey ? <span className="text-xs text-muted-foreground">Secure document selected</span> : null}
+            </label>
+          </div>
           <div className="grid gap-3 md:grid-cols-2">
             <Input placeholder="Preview URL" value={serviceForm.previewUrl} onChange={(event) => setServiceForm({ ...serviceForm, previewUrl: event.target.value })} />
-            <Input placeholder="Detail PDF URL" value={serviceForm.detailPdfUrl} onChange={(event) => setServiceForm({ ...serviceForm, detailPdfUrl: event.target.value })} />
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              {serviceForm.detailPdfUrl ? <a href={serviceForm.detailPdfUrl} target="_blank" rel="noreferrer">Open current document</a> : 'No detail document'}
+            </div>
           </div>
           <div className="grid gap-3 md:grid-cols-2">
             <textarea className="min-h-28 rounded-md border border-border bg-background px-3 py-2 text-sm" placeholder="Included items" value={serviceForm.includedItems} onChange={(event) => setServiceForm({ ...serviceForm, includedItems: event.target.value })} />
@@ -389,7 +486,7 @@ export function StoreServicesPanel({ initialData }: { initialData: StoreServices
             </label>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button type="button" onClick={submitService} disabled={working === 'service' || !serviceForm.title.trim()}>
+            <Button type="button" onClick={submitService} disabled={Boolean(working) || !serviceForm.title.trim()}>
               <Save className="h-4 w-4" />
               {serviceForm.id ? 'Update card' : 'Create card'}
             </Button>
@@ -513,7 +610,21 @@ export function StoreServicesPanel({ initialData }: { initialData: StoreServices
                     </select>
                   </div>
                   <div className="mt-3 grid gap-3 md:grid-cols-2">
-                    <Input placeholder="Receipt URL" value={draft.receiptUrl} onChange={(event) => setRequestDrafts({ ...requestDrafts, [request.id]: { ...draft, receiptUrl: event.target.value } })} />
+                    <label className="flex h-10 items-center gap-2 rounded-md border border-border bg-background px-3 text-sm">
+                      <FileText className="h-4 w-4" />
+                      <span className="flex-1 truncate">{draft.receiptObjectKey ? 'Receipt selected' : 'Upload receipt'}</span>
+                      <input
+                        className="max-w-40 text-xs"
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp,application/pdf,.doc,.docx"
+                        disabled={Boolean(working)}
+                        onChange={(event) => {
+                          const file = event.target.files?.[0]
+                          event.target.value = ''
+                          if (file) void uploadRequestReceipt(request, file)
+                        }}
+                      />
+                    </label>
                     <Input placeholder="Admin notes" value={draft.adminNotes} onChange={(event) => setRequestDrafts({ ...requestDrafts, [request.id]: { ...draft, adminNotes: event.target.value } })} />
                   </div>
                   <div className="mt-3 grid gap-3 md:grid-cols-2">

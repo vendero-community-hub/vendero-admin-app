@@ -37,6 +37,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { useActionModal } from "@/components/ui/action-modal";
 import { APP_ENV, socketIoEndpoint } from "@/lib/environment";
+import { uploadAdminMedia } from "@/lib/trusted-media";
 import {
   buildWhatsAppMessageMap,
   whatsappDeliveryStatus,
@@ -438,8 +439,7 @@ export function WhatsappAdminPanel({
     type: "text",
     text: "",
     emoji: "",
-    mediaUrl: "",
-    mediaId: "",
+    mediaObjectKey: "",
     caption: "",
     filename: "",
     latitude: "",
@@ -847,8 +847,7 @@ export function WhatsappAdminPanel({
       type: messageForm.type,
       text: messageForm.text,
       emoji: messageForm.emoji,
-      mediaUrl: messageForm.mediaUrl,
-      mediaId: messageForm.mediaId,
+      mediaObjectKey: messageForm.mediaObjectKey,
       caption: messageForm.caption,
       filename: messageForm.filename,
       latitude: messageForm.latitude ? Number(messageForm.latitude) : undefined,
@@ -900,8 +899,7 @@ export function WhatsappAdminPanel({
         to: "",
         text: "",
         emoji: "",
-        mediaUrl: "",
-        mediaId: "",
+        mediaObjectKey: "",
         caption: "",
         filename: "",
         latitude: "",
@@ -956,9 +954,43 @@ export function WhatsappAdminPanel({
   }
 
   function setComposerMode(type: string) {
-    setMessageForm((current) => ({ ...current, type }));
+    setMessageForm((current) => ({
+      ...current,
+      type,
+      mediaObjectKey: "",
+      filename: "",
+    }));
     setAttachmentOpen(false);
     setTemplatePickerOpen(type === "template");
+  }
+
+  async function uploadPlatformMessageMedia(file: File) {
+    setWorking("upload-platform-media");
+    setError(null);
+    try {
+      const asset = await uploadAdminMedia(file, "platform.whatsapp-outbound");
+      setMessageForm((current) => ({
+        ...current,
+        mediaObjectKey: asset.objectKey,
+        filename: current.type === "document" ? file.name : current.filename,
+      }));
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Unable to upload WhatsApp media",
+      );
+    } finally {
+      setWorking(null);
+    }
+  }
+
+  function platformMediaAccept() {
+    if (messageForm.type === "image") return "image/jpeg,image/png,image/webp";
+    if (messageForm.type === "sticker") return "image/webp";
+    if (messageForm.type === "video") return "video/mp4,video/quicktime";
+    if (messageForm.type === "audio") return "audio/*";
+    return ".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.md";
   }
 
   function selectTemplate(template: WhatsappTemplate) {
@@ -1448,24 +1480,22 @@ export function WhatsappAdminPanel({
                   </select>
                   <Input
                     className="border-white/10 bg-[#0b141a] text-slate-100"
-                    placeholder="Media URL"
-                    value={messageForm.mediaUrl}
-                    onChange={(event) =>
-                      setMessageForm((current) => ({
-                        ...current,
-                        mediaUrl: event.target.value,
-                      }))
-                    }
+                    type="file"
+                    accept={platformMediaAccept()}
+                    disabled={working === "upload-platform-media"}
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      event.target.value = "";
+                      if (file) void uploadPlatformMessageMedia(file);
+                    }}
                   />
                   <Input
                     className="border-white/10 bg-[#0b141a] text-slate-100"
-                    placeholder="Media ID"
-                    value={messageForm.mediaId}
-                    onChange={(event) =>
-                      setMessageForm((current) => ({
-                        ...current,
-                        mediaId: event.target.value,
-                      }))
+                    readOnly
+                    value={
+                      messageForm.mediaObjectKey
+                        ? messageForm.filename || "Media uploaded"
+                        : "Choose a file to upload"
                     }
                   />
                   {messageForm.type === "document" ? (
@@ -1829,23 +1859,21 @@ export function WhatsappAdminPanel({
                 ) ? (
                   <div className="space-y-2">
                     <Input
-                      placeholder="Media URL"
-                      value={messageForm.mediaUrl}
-                      onChange={(event) =>
-                        setMessageForm((current) => ({
-                          ...current,
-                          mediaUrl: event.target.value,
-                        }))
-                      }
+                      type="file"
+                      accept={platformMediaAccept()}
+                      disabled={working === "upload-platform-media"}
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        event.target.value = "";
+                        if (file) void uploadPlatformMessageMedia(file);
+                      }}
                     />
                     <Input
-                      placeholder="Media ID"
-                      value={messageForm.mediaId}
-                      onChange={(event) =>
-                        setMessageForm((current) => ({
-                          ...current,
-                          mediaId: event.target.value,
-                        }))
+                      readOnly
+                      value={
+                        messageForm.mediaObjectKey
+                          ? messageForm.filename || "Media uploaded"
+                          : "Choose a file to upload"
                       }
                     />
                     <Input
