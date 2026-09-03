@@ -11,7 +11,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@vendero/media": "file:../../packages/media",
+    "@vendero/media": "file:./packages/media",
     "@radix-ui/react-separator": "^1.1.8",
     "@radix-ui/react-slot": "^1.2.4",
     "@tailwindcss/postcss": "^4.2.4",
