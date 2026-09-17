@@ -9,6 +9,7 @@ import {
   type WhatsPilotAccessSettings,
 } from "./whatsapp-pilot-access-panel";
 import { WhatsPilotLifecyclePanel } from "./whatsapp-pilot-lifecycle-panel";
+import { WhatsPilotTemplateVariablesPanel } from "./whatsapp-pilot-template-variables-panel";
 
 async function getSettings() {
   const cookieStore = await cookies();
@@ -54,6 +55,7 @@ export default async function WhatsPilotSettingsPage() {
     <main className="mx-auto w-full max-w-7xl space-y-6">
       <WhatsPilotAccessPanel initialSettings={accessSettings} />
       <WhatsPilotLifecyclePanel />
+      <WhatsPilotTemplateVariablesPanel />
       <WhatsPilotWebhookSettingsPanel initialSettings={webhookSettings} />
     </main>
   );

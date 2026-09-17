@@ -37,6 +37,7 @@ const PAGE_PERMISSION_BY_PATH: Array<{ prefix: string; permission: string }> = [
   { prefix: '/landing', permission: 'landing' },
   { prefix: '/image-library', permission: 'image_library' },
   { prefix: '/ai-management', permission: 'features' },
+  { prefix: '/ai-transactions', permission: 'features' },
   { prefix: '/feature-analytics', permission: 'features' },
   { prefix: '/features', permission: 'features' },
   { prefix: '/banners', permission: 'banners' },

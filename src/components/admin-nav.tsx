@@ -115,6 +115,7 @@ export const adminNavGroups: AdminNavGroup[] = [
       { href: "/links", label: "White Label", icon: Link2 },
       { href: "/landing", label: "Landing Requests", icon: ClipboardList },
       { href: "/ai-management", label: "AI Service", icon: Bot },
+      { href: "/ai-transactions", label: "AI Transactions", icon: Activity },
       { href: "/image-library", label: "Image Library", icon: Images },
       { href: "/features", label: "New Features", icon: Sparkles },
       {
@@ -163,6 +164,7 @@ export const adminPermissionByHref: Record<string, string> = {
   "/links": "links",
   "/landing": "landing",
   "/ai-management": "features",
+  "/ai-transactions": "features",
   "/image-library": "image_library",
   "/features": "features",
   "/feature-analytics": "features",

@@ -624,7 +624,7 @@ export function WhatsPilotAccountOperationsPanel() {
         <CardHeader>
           <CardTitle>Find a vendor account</CardTitle>
           <CardDescription>
-            Search by vendor ID, business name, contact, phone, or email. No
+            Search by vendor ID, WhatsApp business ID, business name, contact, phone, or email. No
             operation starts until you review the exact account.
           </CardDescription>
         </CardHeader>
