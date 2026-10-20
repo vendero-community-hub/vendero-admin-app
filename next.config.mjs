@@ -1,3 +1,4 @@
+import { withRelease } from './scripts/release.mjs'
 function normalizeAppEnvironment(value) {
   const normalized = String(value ?? '').trim().toLowerCase()
   if (['prod', 'pro', 'production'].includes(normalized)) return 'prod'
@@ -48,4 +49,4 @@ const nextConfig = {
   },
 }
 
-export default nextConfig
+export default withRelease(nextConfig, new URL('.', import.meta.url))

@@ -9280,6 +9280,7 @@ export function SiteThemesPanel({
     Record<number, AiSeoWorkingAction | undefined>
   >({});
   const autoLoadedAiSeoSites = useRef(new Set<number>());
+  const aiSeoAttempts = useRef<Record<string, { key: string; maximumCredits: number }>>({});
   const [searchConsoleTokens, setSearchConsoleTokens] = useState<Record<number, string>>({});
   const [runtimeBookings, setRuntimeBookings] = useState<RuntimeBookingOverview | null>(null);
   const [recoveryOverviews, setRecoveryOverviews] = useState<Record<number, RuntimeRecoveryOverview | undefined>>({});
@@ -9473,14 +9474,35 @@ export function SiteThemesPanel({
     setMessage("");
     setAiSeoWorking((current) => ({ ...current, [site.id]: "generate" }));
     try {
+      const attemptId = `${site.id}:${scope}`;
+      let attempt = aiSeoAttempts.current[attemptId];
+      if (!attempt) {
+        const estimate = await requestJson(
+          `/api/v1/admin/vendero-sites/vendor-sites/${site.id}/ai-seo/estimate`,
+          { scope, includeRoutes: scope !== "pages" }, "POST",
+        ) as { estimatedCredits: number; availableCredits: number; canGenerate: boolean };
+        if (!estimate.canGenerate) throw new Error("This vendor does not have enough AI credits for these pages.");
+        const confirmed = await actionModal.confirm({
+          title: `Generate SEO for ${site.label}`,
+          description: `This uses up to ${estimate.estimatedCredits} of this vendor's ${estimate.availableCredits} available AI credits. Review drafts will be saved for separate approval.`,
+          confirmLabel: "Use credits and generate",
+        });
+        if (!confirmed) return;
+        attempt = { key: crypto.randomUUID(), maximumCredits: estimate.estimatedCredits };
+        aiSeoAttempts.current[attemptId] = attempt;
+      }
       const result = (await requestJson(
         `/api/v1/admin/vendero-sites/vendor-sites/${site.id}/ai-seo/generate`,
         {
           scope,
           includeRoutes: scope !== "pages",
+          idempotencyKey: attempt.key,
+          maximumCredits: attempt.maximumCredits,
+          confirmCreditSpend: true,
         },
         "POST",
       )) as AiSeoGenerateResponse;
+      delete aiSeoAttempts.current[attemptId];
       setAiSeoOverviews((current) => ({
         ...current,
         [site.id]: result.overview,

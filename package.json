@@ -8,7 +8,8 @@
     "start": "next start --port 3001",
     "lint": "next lint",
     "typecheck": "tsc --project tsconfig.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run src",
+    "test:release": "node --test scripts/release.test.mjs"
   },
   "dependencies": {
     "@vendero/media": "file:./packages/media",

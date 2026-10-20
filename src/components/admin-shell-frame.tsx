@@ -1,5 +1,7 @@
 "use client";
 
+import { ReleaseVersion } from "@/components/release-version";
+
 import { useState } from "react";
 import Link from "next/link";
 import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
@@ -123,6 +125,7 @@ export function AdminShellFrame({
           </header>
 
           <div className="p-5 lg:p-7">{children}</div>
+          <footer className="px-5 pb-5 text-muted-foreground lg:px-7"><ReleaseVersion /></footer>
         </div>
       </div>
     </div>
